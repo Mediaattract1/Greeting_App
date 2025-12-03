@@ -3,11 +3,17 @@ from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 import os
 import sys
+import time
+import shutil
+import uuid
 
 # --- CONFIGURATION ---
-# Make sure these match your file names exactly
-TEMPLATE_FILE = "HB Layout1.mp4" 
-AD_FILE_PREFIX = "ad"
+TEMPLATE_FILE = "HB Layout1.mp4"
+OUTPUT_FOLDER = "generated_videos"
+TARGET_RES = (1920, 1080) # Force Landscape TV Resolution
+
+if not os.path.exists(OUTPUT_FOLDER):
+    os.makedirs(OUTPUT_FOLDER)
 
 # --- MOVIEPY IMPORT FIXER ---
 try:
@@ -29,23 +35,27 @@ except ImportError:
     ImageClip = mp.ImageClip
     FadeOut = None
 
+# --- HELPER: SAFE RESIZE ---
+def safe_resize(clip, size):
+    try:
+        return clip.resized(new_size=size)
+    except:
+        return clip.resize(newsize=size)
+
 # --- HELPER FUNCTIONS ---
 def get_ad_file():
-    extensions = ['.mp4', '.mov', '.gif', '.png', '.jpg']
-    for ext in extensions:
+    for ext in ['.mp4', '.mov', '.gif', '.png', '.jpg']:
         if os.path.exists("ad" + ext):
             return "ad" + ext
     return None
 
 def get_font_and_metrics(text, max_width, start_size):
     font_size = start_size
-    try:
-        font = ImageFont.truetype("arialbd.ttf", font_size)
+    # Force Arial Bold logic for Cloud
+    try: font = ImageFont.truetype("arialbd.ttf", font_size)
     except:
-        try:
-            font = ImageFont.truetype("arial.ttf", font_size)
-        except:
-            font = ImageFont.load_default()
+        try: font = ImageFont.truetype("arial.ttf", font_size)
+        except: font = ImageFont.load_default()
 
     dummy_draw = ImageDraw.Draw(Image.new('RGB', (1, 1)))
     
@@ -60,190 +70,205 @@ def get_font_and_metrics(text, max_width, start_size):
                 bbox = dummy_draw.textbbox((0, 0), char, font=font)
                 total_w += (bbox[2] - bbox[0])
         
-        if len(text) > 1:
-            total_w -= (len(text) - 1) * kerning
-        
-        if total_w < max_width or font_size < 20:
-            break
+        if len(text) > 1: total_w -= (len(text) - 1) * kerning
+        if total_w < max_width or font_size < 20: break
         font_size = int(font_size * 0.9)
-        try:
-            font = ImageFont.truetype("arialbd.ttf", font_size)
-        except:
-            font = ImageFont.truetype("arial.ttf", font_size)
+        try: font = ImageFont.truetype("arialbd.ttf", font_size)
+        except: font = ImageFont.truetype("arial.ttf", font_size)
 
-    ref_bbox = dummy_draw.textbbox((0, 0), "Ay!^_", font=font, anchor="ls")
-    fixed_height = (-ref_bbox[1]) + ref_bbox[3]
-    max_ascent = -ref_bbox[1]
-    
-    return font, font_size, fixed_height, max_ascent
+    return font, font_size
 
-def create_single_letter_image(char, font, filename, fixed_height, max_ascent):
+def create_single_letter_image(char, font, filename):
     dummy_draw = ImageDraw.Draw(Image.new('RGB', (1, 1)))
     bbox = dummy_draw.textbbox((0, 0), char, font=font, anchor="ls")
     char_w = bbox[2] - bbox[0]
     
+    # 1080p Alignment Canvas
     canvas_height = 600
     canvas_baseline = 400 
+    
     padding_x = 200
     img_w = int(char_w + padding_x)
-    
     img = Image.new('RGBA', (img_w, canvas_height), (255, 255, 255, 0))
     draw = ImageDraw.Draw(img)
     draw_x = padding_x // 2
     stroke_width = 3
-    
     for x in range(-stroke_width, stroke_width+1):
         for y in range(-stroke_width, stroke_width+1):
             draw.text((draw_x+x, canvas_baseline+y), char, font=font, fill="black", anchor="ls")
     draw.text((draw_x, canvas_baseline), char, font=font, fill="white", anchor="ls")
     
+    # High Quality Flat Rotation
     img = img.rotate(0, expand=False, resample=Image.BICUBIC)
     img.save(filename)
     return char_w
 
-# --- STREAMLIT APP LAYOUT ---
-st.set_page_config(page_title="Birthday Video", page_icon="🎂", layout="centered")
+# --- MAIN APP LOGIC ---
+st.set_page_config(page_title="Birthday App", page_icon="🎂", layout="centered")
 
-st.title("🎂 Birthday Video Maker")
+query_params = st.query_params
+url_role = query_params.get("role", "landing")
+url_id = query_params.get("id", None)
 
-if not os.path.exists(TEMPLATE_FILE):
-    st.error(f"Error: Could not find '{TEMPLATE_FILE}' in the folder.")
-    st.stop()
+# --- MODE 1: OWNER REMOTE (Phone) ---
+if url_role == "owner":
+    if not url_id:
+        st.error("❌ Invalid Link. Please scan the QR code on your device again.")
+        st.stop()
 
-name_input = st.text_input("Enter Name:", max_chars=20)
+    st.title("📱 Remote Control")
+    
+    with st.form("birthday_form"):
+        name_input = st.text_input("Enter Name:", max_chars=20, placeholder="e.g. Grandpa").strip()
+        submit_btn = st.form_submit_button("Play Video on TV", type="primary")
 
-if st.button("Create Video"):
-    if not name_input:
-        st.warning("Please enter a name first.")
-    else:
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        status_text.text("Initializing...")
-        
-        try:
-            # --- PROCESSING LOGIC ---
-            raw_name = name_input.strip()
-            full_text = raw_name + "!"
-            output_filename = f"Birthday_{raw_name}.mp4"
+    if submit_btn:
+        if not name_input:
+            st.warning("Please enter a name.")
+        else:
+            status = st.empty()
+            prog = st.progress(0)
             
-            clip = VideoFileClip(TEMPLATE_FILE)
-            
-            # Metrics
-            max_w = clip.w * 0.45 
-            start_size = int(clip.h * 0.11) 
-            font, font_size, fixed_height, max_ascent = get_font_and_metrics(full_text, max_w, start_size)
-            kerning = int(font_size * 0.06)
-
-            # Calculate Widths
-            dummy_draw = ImageDraw.Draw(Image.new('RGB', (1, 1)))
-            total_text_width = 0
-            char_widths = []
-            for char in full_text:
-                if char == " ":
-                    cw = int(font_size * 0.25)
-                    char_widths.append(cw)
-                    total_text_width += cw
-                else:
-                    bbox = dummy_draw.textbbox((0, 0), char, font=font)
-                    cw = bbox[2] - bbox[0]
-                    char_widths.append(cw)
-                    total_text_width += cw
-            total_text_width -= (len(full_text) - 1) * kerning
-
-            # Positions
-            center_x = clip.w * 0.65 
-            current_target_x = center_x - (total_text_width / 2)
-            visual_baseline_y = clip.h * 0.75
-            target_y_top = visual_baseline_y - 400
-
-            clips_to_composite = [clip] 
-            start_time_base = 2.0
-            stagger_delay = 0.1 
-            slide_duration = 1.0 
-            fade_duration = 1.0
-            
-            temp_files = []
-
-            # Generate Letters
-            status_text.text("Generating text animation...")
-            progress_bar.progress(20)
-            
-            for i, char in enumerate(full_text):
-                if char == " ":
-                    current_target_x += char_widths[i] - kerning
-                    continue
+            try:
+                status.info("Creating TV-Ready Video (1080p)...")
+                full_text = name_input + "!"
+                temp_filename = f"temp_{url_id}.mp4"
+                final_path = os.path.join(OUTPUT_FOLDER, f"{url_id}.mp4")
                 
-                temp_file = f"temp_char_{i}.png"
-                temp_files.append(temp_file)
-                create_single_letter_image(char, font, temp_file, fixed_height, max_ascent)
+                # --- LOAD & RESIZE BACKGROUND TO 1920x1080 ---
+                clip = VideoFileClip(TEMPLATE_FILE)
+                clip = safe_resize(clip, TARGET_RES)
                 
-                letter_clip = ImageClip(temp_file).with_duration(clip.duration)
-                try:
-                    if FadeOut:
-                        letter_clip = letter_clip.with_effects([FadeOut(fade_duration)])
+                max_w = clip.w * 0.45 
+                start_size = int(clip.h * 0.11) 
+                font, font_size = get_font_and_metrics(full_text, max_w, start_size)
+                kerning = int(font_size * 0.06)
+                
+                dummy = ImageDraw.Draw(Image.new('RGB', (1,1)))
+                total_w = 0
+                widths = []
+                for char in full_text:
+                    if char == " ":
+                        w = int(font_size*0.25)
+                        widths.append(w)
+                        total_w += w
                     else:
-                        letter_clip = letter_clip.fadeout(fade_duration)
-                except: pass
-
-                my_start_time = start_time_base + (i * stagger_delay)
-                my_target_x = current_target_x 
-                my_visual_x = my_target_x - 100 
-                my_start_x = clip.w - 1 
-
-                def get_slide_pos(t, sx=my_start_x, tx=my_visual_x, ty=target_y_top, dur=slide_duration):
-                    if t < 0: return (int(sx), int(ty))
-                    if t < dur:
-                        ratio = t / dur
-                        progress = 1 - ((1 - ratio) ** 3)
-                        curr_x = sx - ((sx - tx) * progress)
-                        return (int(curr_x), int(ty))
-                    return (int(tx), int(ty))
-
-                letter_clip = letter_clip.with_start(my_start_time).with_position(get_slide_pos)
-                clips_to_composite.append(letter_clip)
-                current_target_x += char_widths[i] - kerning
-
-            final_birthday_part = CompositeVideoClip(clips_to_composite)
-            
-            # Ad Logic
-            ad_file = get_ad_file()
-            if ad_file:
-                try:
-                    ext = os.path.splitext(ad_file)[1].lower()
-                    if ext in ['.mp4', '.mov', '.gif']:
-                        ad_clip = VideoFileClip(ad_file)
-                    else:
-                        ad_clip = ImageClip(ad_file).with_duration(10) # 10s Static
-                    
+                        w = dummy.textbbox((0,0),char,font)[2]-dummy.textbbox((0,0),char,font)[0]
+                        widths.append(w)
+                        total_w += w
+                total_w -= (len(full_text)-1)*kerning
+                
+                center_x = clip.w * 0.65
+                curr_x = center_x - (total_w / 2)
+                
+                visual_baseline_y = clip.h * 0.75
+                target_y_top = visual_baseline_y - 400
+                
+                clips = [clip]
+                temp_imgs = []
+                
+                prog.progress(20)
+                
+                for i, char in enumerate(full_text):
+                    if char == " ":
+                        curr_x += widths[i] - kerning
+                        continue
+                    fname = f"t_{i}_{url_id}.png"
+                    temp_imgs.append(fname)
+                    create_single_letter_image(char, font, fname)
+                    lc = ImageClip(fname).with_duration(clip.duration)
                     try:
-                        ad_clip = ad_clip.resized(new_size=clip.size)
-                    except:
-                        ad_clip = ad_clip.resize(newsize=clip.size)
+                        if FadeOut: lc = lc.with_effects([FadeOut(1.0)])
+                        else: lc = lc.fadeout(1.0)
+                    except: pass
                     
-                    start_time_of_ad = final_birthday_part.duration
-                    ad_clip = ad_clip.with_start(start_time_of_ad)
-                    final_output = CompositeVideoClip([final_birthday_part, ad_clip])
-                except:
-                    final_output = final_birthday_part
-            else:
-                final_output = final_birthday_part
+                    st_time = 2.0 + (i*0.1)
+                    tx = curr_x - 100 
+                    
+                    def pos(t): 
+                        start_x = clip.w - 1
+                        if t < 1.0: 
+                            p = 1 - ((1 - t)**3)
+                            current = start_x - ((start_x - tx) * p)
+                            return (int(current), int(target_y_top))
+                        return (int(tx), int(target_y_top))
+                    
+                    lc = lc.with_start(st_time).with_position(pos)
+                    clips.append(lc)
+                    curr_x += widths[i] - kerning
+                
+                final_part = CompositeVideoClip(clips)
+                
+                ad = get_ad_file()
+                if ad:
+                    try:
+                        if ad.endswith(('.mp4','.mov','.gif')):
+                            ac = VideoFileClip(ad)
+                        else:
+                            ac = ImageClip(ad).with_duration(15)
+                        
+                        ac = safe_resize(ac, TARGET_RES)
+                        ac = ac.with_start(final_part.duration)
+                        final_part = CompositeVideoClip([final_part, ac])
+                    except: pass
+                
+                prog.progress(60)
+                
+                # Write file (Logger=None prevents crashes on server)
+                final_part.write_videofile(temp_filename, codec='libx264', audio_codec='aac', fps=clip.fps, logger=None)
+                shutil.move(temp_filename, final_path)
+                
+                prog.progress(100)
+                status.success("Sent to TV!")
+                
+                for f in temp_imgs: 
+                    if os.path.exists(f): os.remove(f)
+                    
+            except Exception as e:
+                st.error(f"Error: {e}")
 
-            # Render
-            status_text.text("Rendering video... please wait.")
-            progress_bar.progress(50)
-            
-            # Write to temp file first
-            final_output.write_videofile(output_filename, codec='libx264', audio_codec='aac', fps=clip.fps, logger=None)
-            
-            progress_bar.progress(100)
-            status_text.success("Done!")
-            
-            # Display Video
-            st.video(output_filename)
-            
-            # Cleanup
-            for f in temp_files:
-                if os.path.exists(f): os.remove(f)
+# --- MODE 2: DISPLAY SCREEN (Stick) ---
+elif url_role == "display":
+    st.markdown("""
+        <style>
+            [data-testid="stSidebar"] {display: none;}
+            section.main {padding-top: 0px;}
+            header {visibility: hidden;}
+            footer {visibility: hidden;}
+            #MainMenu {visibility: hidden;}
+        </style>
+    """, unsafe_allow_html=True)
 
-        except Exception as e:
-            st.error(f"An error occurred: {str(e)}")
+    if not url_id:
+        st.error("Setup Error: No Stick ID found in URL.")
+        st.stop()
+
+    target_file = os.path.join(OUTPUT_FOLDER, f"{url_id}.mp4")
+    
+    if os.path.exists(target_file):
+        file_stats = os.stat(target_file)
+        current_mod_time = file_stats.st_mtime
+        
+        if "last_played_time" not in st.session_state:
+            st.session_state.last_played_time = 0
+
+        if current_mod_time > st.session_state.last_played_time:
+            st.video(target_file, autoplay=True)
+            st.session_state.last_played_time = current_mod_time
+        else:
+            st.info(f"Ready. ID: {url_id}")
+    else:
+        st.title("Waiting for setup...")
+        st.write(f"Device ID: {url_id}")
+
+    time.sleep(3)
+    st.rerun()
+
+# --- MODE 3: ADMIN ---
+else:
+    st.title("🏭 Factory Setup")
+    if st.button("Generate New Device ID"):
+        new_id = str(uuid.uuid4())[:8] 
+        st.success(f"Created ID: {new_id}")
+        st.code(f"https://your-app.onrender.com/?role=display&id={new_id}")
+        st.code(f"https://your-app.onrender.com/?role=owner&id={new_id}")
