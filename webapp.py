@@ -8,9 +8,12 @@ import shutil
 import uuid
 
 # --- CONFIGURATION ---
+# PASTE YOUR REAL RENDER URL HERE (No trailing slash)
+BASE_URL = "https://greeting-app-wh2w.onrender.com"
+
 TEMPLATE_FILE = "HB Layout1.mp4"
 OUTPUT_FOLDER = "generated_videos"
-TARGET_RES = (1920, 1080) # Force Landscape TV Resolution
+TARGET_RES = (1920, 1080) 
 
 if not os.path.exists(OUTPUT_FOLDER):
     os.makedirs(OUTPUT_FOLDER)
@@ -51,7 +54,6 @@ def get_ad_file():
 
 def get_font_and_metrics(text, max_width, start_size):
     font_size = start_size
-    # Force Arial Bold logic for Cloud
     try: font = ImageFont.truetype("arialbd.ttf", font_size)
     except:
         try: font = ImageFont.truetype("arial.ttf", font_size)
@@ -83,7 +85,6 @@ def create_single_letter_image(char, font, filename):
     bbox = dummy_draw.textbbox((0, 0), char, font=font, anchor="ls")
     char_w = bbox[2] - bbox[0]
     
-    # 1080p Alignment Canvas
     canvas_height = 600
     canvas_baseline = 400 
     
@@ -98,13 +99,12 @@ def create_single_letter_image(char, font, filename):
             draw.text((draw_x+x, canvas_baseline+y), char, font=font, fill="black", anchor="ls")
     draw.text((draw_x, canvas_baseline), char, font=font, fill="white", anchor="ls")
     
-    # High Quality Flat Rotation
     img = img.rotate(0, expand=False, resample=Image.BICUBIC)
     img.save(filename)
     return char_w
 
 # --- MAIN APP LOGIC ---
-st.set_page_config(page_title="Birthday App", page_icon="🎂", layout="centered")
+st.set_page_config(page_title="Greeting App", page_icon="🎂", layout="centered")
 
 query_params = st.query_params
 url_role = query_params.get("role", "landing")
@@ -135,7 +135,7 @@ if url_role == "owner":
                 temp_filename = f"temp_{url_id}.mp4"
                 final_path = os.path.join(OUTPUT_FOLDER, f"{url_id}.mp4")
                 
-                # --- LOAD & RESIZE BACKGROUND TO 1920x1080 ---
+                # --- PROCESSING ---
                 clip = VideoFileClip(TEMPLATE_FILE)
                 clip = safe_resize(clip, TARGET_RES)
                 
@@ -214,7 +214,7 @@ if url_role == "owner":
                 
                 prog.progress(60)
                 
-                # Write file (Logger=None prevents crashes on server)
+                # Write file
                 final_part.write_videofile(temp_filename, codec='libx264', audio_codec='aac', fps=clip.fps, logger=None)
                 shutil.move(temp_filename, final_path)
                 
@@ -267,8 +267,12 @@ elif url_role == "display":
 # --- MODE 3: ADMIN ---
 else:
     st.title("🏭 Factory Setup")
+    
+    if "CHANGE-THIS" in BASE_URL:
+        st.error("⚠️ WARNING: Please edit Line 12 of webapp.py and paste your Render URL.")
+        
     if st.button("Generate New Device ID"):
         new_id = str(uuid.uuid4())[:8] 
         st.success(f"Created ID: {new_id}")
-        st.code(f"https://your-app.onrender.com/?role=display&id={new_id}")
-        st.code(f"https://your-app.onrender.com/?role=owner&id={new_id}")
+        st.code(f"{BASE_URL}/?role=display&id={new_id}")
+        st.code(f"{BASE_URL}/?role=owner&id={new_id}")
