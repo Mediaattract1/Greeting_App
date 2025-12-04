@@ -5,16 +5,13 @@ import os
 import sys
 import time
 import shutil
-import uuid
+import gc
 
 # --- CONFIGURATION ---
-BASE_URL = "https://greeting-app-wh2w.onrender.com" 
+# The single file everyone watches
+TARGET_FILE = "video.mp4" 
 TEMPLATE_FILE = "HB Layout1.mp4"
-OUTPUT_FOLDER = "generated_videos"
 TARGET_RES = (1920, 1080) 
-
-# --- FIX: THREAD-SAFE FOLDER CREATION ---
-os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
 # --- MOVIEPY IMPORT FIXER ---
 try:
@@ -36,18 +33,14 @@ except ImportError:
     ImageClip = mp.ImageClip
     FadeOut = None
 
-# --- HELPER: SAFE RESIZE ---
+# --- HELPERS ---
 def safe_resize(clip, size):
-    try:
-        return clip.resized(new_size=size)
-    except:
-        return clip.resize(newsize=size)
+    try: return clip.resized(new_size=size)
+    except: return clip.resize(newsize=size)
 
-# --- HELPER FUNCTIONS ---
 def get_ad_file():
     for ext in ['.mp4', '.mov', '.gif', '.png', '.jpg']:
-        if os.path.exists("ad" + ext):
-            return "ad" + ext
+        if os.path.exists("ad" + ext): return "ad" + ext
     return None
 
 def get_font_and_metrics(text, max_width, start_size):
@@ -57,236 +50,147 @@ def get_font_and_metrics(text, max_width, start_size):
         try: font = ImageFont.truetype("arial.ttf", font_size)
         except: font = ImageFont.load_default()
 
-    dummy_draw = ImageDraw.Draw(Image.new('RGB', (1, 1)))
-    
+    dummy = ImageDraw.Draw(Image.new('RGB', (1, 1)))
     while True:
         total_w = 0
         kerning = int(font_size * 0.06)
         for char in text:
-            if char == " ":
-                cw = int(font_size * 0.25) 
-                total_w += cw
-            else:
-                bbox = dummy_draw.textbbox((0, 0), char, font=font)
-                total_w += (bbox[2] - bbox[0])
-        
+            cw = int(font_size * 0.25) if char == " " else (dummy.textbbox((0, 0), char, font)[2] - dummy.textbbox((0, 0), char, font)[0])
+            total_w += cw
         if len(text) > 1: total_w -= (len(text) - 1) * kerning
         if total_w < max_width or font_size < 20: break
         font_size = int(font_size * 0.9)
         try: font = ImageFont.truetype("arialbd.ttf", font_size)
-        except: font = ImageFont.truetype("arial.ttf", font_size)
-
+        except: pass
     return font, font_size
 
-def create_single_letter_image(char, font, filename):
-    dummy_draw = ImageDraw.Draw(Image.new('RGB', (1, 1)))
-    bbox = dummy_draw.textbbox((0, 0), char, font=font, anchor="ls")
-    char_w = bbox[2] - bbox[0]
-    
-    canvas_height = 600
-    canvas_baseline = 400 
-    
-    padding_x = 200
-    img_w = int(char_w + padding_x)
-    img = Image.new('RGBA', (img_w, canvas_height), (255, 255, 255, 0))
-    draw = ImageDraw.Draw(img)
-    draw_x = padding_x // 2
-    stroke_width = 3
-    for x in range(-stroke_width, stroke_width+1):
-        for y in range(-stroke_width, stroke_width+1):
-            draw.text((draw_x+x, canvas_baseline+y), char, font=font, fill="black", anchor="ls")
-    draw.text((draw_x, canvas_baseline), char, font=font, fill="white", anchor="ls")
-    
-    img = img.rotate(0, expand=False, resample=Image.BICUBIC)
-    img.save(filename)
+def create_letter_image(char, font, filename):
+    dummy = ImageDraw.Draw(Image.new('RGB', (1, 1)))
+    char_w = dummy.textbbox((0, 0), char, font=font, anchor="ls")[2] - dummy.textbbox((0, 0), char, font, anchor="ls")[0]
+    img = Image.new('RGBA', (int(char_w + 200), 600), (255, 255, 255, 0))
+    d = ImageDraw.Draw(img)
+    for x in range(-3,4):
+        for y in range(-3,4): d.text((100+x, 400+y), char, font, fill="black", anchor="ls")
+    d.text((100, 400), char, font, fill="white", anchor="ls")
+    img.rotate(0, expand=False, resample=Image.BICUBIC).save(filename)
     return char_w
 
-# --- MAIN APP LOGIC ---
-st.set_page_config(page_title="Greeting App", page_icon="🎂", layout="centered")
+# --- APP LOGIC ---
+st.set_page_config(page_title="Sign Manager", layout="centered")
+
+# CSS to hide menus for the TV
+st.markdown("""<style>[data-testid="stSidebar"],header,footer,#MainMenu{display:none;}</style>""", unsafe_allow_html=True)
 
 query_params = st.query_params
-url_role = query_params.get("role", "landing")
-url_id = query_params.get("id", None)
+mode = query_params.get("mode", "display")
 
-# --- MODE 1: OWNER REMOTE (Phone) ---
-if url_role == "owner":
-    if not url_id:
-        st.error("❌ Invalid Link. Please scan the QR code on your device again.")
-        st.stop()
-
-    st.title("📱 Remote Control")
+# === UPDATE MODE (The Controller) ===
+if mode == "update":
+    st.title("Update Sign")
     
-    with st.form("birthday_form"):
-        name_input = st.text_input("Enter Name:", max_chars=20, placeholder="e.g. Grandpa").strip()
-        submit_btn = st.form_submit_button("Play Video on TV", type="primary")
+    with st.form("update_form"):
+        name_input = st.text_input("Enter Name:", max_chars=20).strip()
+        submit = st.form_submit_button("Update TV")
+    
+    if submit and name_input:
+        status = st.empty()
+        status.info("Processing... Please wait 30s.")
+        
+        try:
+            full_text = name_input + "!"
+            temp_out = "temp_render.mp4"
+            gc.collect()
 
-    if submit_btn:
-        if not name_input:
-            st.warning("Please enter a name.")
+            clip = VideoFileClip(TEMPLATE_FILE)
+            clip = safe_resize(clip, TARGET_RES)
+            
+            # Font & Metrics
+            font, font_size = get_font_and_metrics(full_text, clip.w * 0.45, int(clip.h * 0.11))
+            kerning = int(font_size * 0.06)
+            
+            # Width Calc
+            dummy = ImageDraw.Draw(Image.new('RGB', (1,1)))
+            total_w = sum([int(font_size*0.25) if c==" " else (dummy.textbbox((0,0),c,font)[2]-dummy.textbbox((0,0),c,font)[0]) for c in full_text])
+            total_w -= (len(full_text)-1)*kerning
+            
+            curr_x = (clip.w * 0.65) - (total_w / 2)
+            target_y = (clip.h * 0.75) - 400
+            
+            clips = [clip]
+            temp_imgs = []
+            
+            # Generate Letters
+            for i, char in enumerate(full_text):
+                if char == " ":
+                    curr_x += int(font_size*0.25) - kerning
+                    continue
+                fname = f"t_{i}.png"
+                temp_imgs.append(fname)
+                w = create_letter_image(char, font, fname)
+                lc = ImageClip(fname).with_duration(clip.duration)
+                try: lc = lc.with_effects([FadeOut(1.0)]) if FadeOut else lc.fadeout(1.0)
+                except: pass
+                
+                st_t = 2.0 + (i*0.1)
+                tx = curr_x - 100
+                def pos(t):
+                    if t < 1.0: return (int(clip.w - ((clip.w-tx)*(1-((1-t)**3)))), int(target_y))
+                    return (int(tx), int(target_y))
+                
+                clips.append(lc.with_start(st_t).with_position(pos))
+                curr_x += w - kerning
+
+            final = CompositeVideoClip(clips)
+            
+            # Ad
+            ad = get_ad_file()
+            if ad:
+                try:
+                    ac = VideoFileClip(ad) if ad.endswith(('.mp4','.mov')) else ImageClip(ad).with_duration(15)
+                    ac = safe_resize(ac, TARGET_RES).with_start(final.duration)
+                    final = CompositeVideoClip([final, ac])
+                except: pass
+            
+            # WRITE (Safe Mode)
+            final.write_videofile(temp_out, codec='libx264', audio_codec='aac', fps=clip.fps, logger=None, threads=1)
+            
+            clip.close()
+            final.close()
+            gc.collect()
+            
+            # Overwrite the live file
+            shutil.move(temp_out, TARGET_FILE)
+            
+            for f in temp_imgs: 
+                if os.path.exists(f): os.remove(f)
+                
+            status.success("Success! TV will update shortly.")
+            
+        except Exception as e:
+            status.error(f"Error: {e}")
+
+# === DISPLAY MODE (The TV Stick) ===
+else:
+    if os.path.exists(TARGET_FILE):
+        # 1. Play the video in a loop
+        st.video(TARGET_FILE, autoplay=True, loop=True)
+        
+        # 2. Check for updates silently
+        # We store the file's "Last Modified" time in the session
+        current_stats = os.stat(TARGET_FILE).st_mtime
+        
+        if "last_version" not in st.session_state:
+            st.session_state.last_version = current_stats
+            
+        # Wait a bit, then check if file changed
+        time.sleep(10)
+        
+        if current_stats > st.session_state.last_version:
+            st.rerun() # Reload page to pick up new video
         else:
-            status = st.empty()
-            prog = st.progress(0)
-            
-            try:
-                status.info("Creating TV-Ready Video (1080p)...")
-                full_text = name_input + "!"
-                temp_filename = f"temp_{url_id}.mp4"
-                final_path = os.path.join(OUTPUT_FOLDER, f"{url_id}.mp4")
-                
-                # --- PROCESSING ---
-                clip = VideoFileClip(TEMPLATE_FILE)
-                clip = safe_resize(clip, TARGET_RES)
-                
-                max_w = clip.w * 0.45 
-                start_size = int(clip.h * 0.11) 
-                font, font_size = get_font_and_metrics(full_text, max_w, start_size)
-                kerning = int(font_size * 0.06)
-                
-                dummy = ImageDraw.Draw(Image.new('RGB', (1,1)))
-                total_w = 0
-                widths = []
-                for char in full_text:
-                    if char == " ":
-                        w = int(font_size*0.25)
-                        widths.append(w)
-                        total_w += w
-                    else:
-                        w = dummy.textbbox((0,0),char,font)[2]-dummy.textbbox((0,0),char,font)[0]
-                        widths.append(w)
-                        total_w += w
-                total_w -= (len(full_text)-1)*kerning
-                
-                center_x = clip.w * 0.65
-                curr_x = center_x - (total_w / 2)
-                
-                visual_baseline_y = clip.h * 0.75
-                target_y_top = visual_baseline_y - 400
-                
-                clips = [clip]
-                temp_imgs = []
-                
-                prog.progress(20)
-                
-                for i, char in enumerate(full_text):
-                    if char == " ":
-                        curr_x += widths[i] - kerning
-                        continue
-                    fname = f"t_{i}_{url_id}.png"
-                    temp_imgs.append(fname)
-                    create_single_letter_image(char, font, fname)
-                    lc = ImageClip(fname).with_duration(clip.duration)
-                    try:
-                        if FadeOut: lc = lc.with_effects([FadeOut(1.0)])
-                        else: lc = lc.fadeout(1.0)
-                    except: pass
-                    
-                    st_time = 2.0 + (i*0.1)
-                    tx = curr_x - 100 
-                    
-                    def pos(t): 
-                        start_x = clip.w - 1
-                        if t < 1.0: 
-                            p = 1 - ((1 - t)**3)
-                            current = start_x - ((start_x - tx) * p)
-                            return (int(current), int(target_y_top))
-                        return (int(tx), int(target_y_top))
-                    
-                    lc = lc.with_start(st_time).with_position(pos)
-                    clips.append(lc)
-                    curr_x += widths[i] - kerning
-                
-                final_part = CompositeVideoClip(clips)
-                
-                ad = get_ad_file()
-                if ad:
-                    try:
-                        if ad.endswith(('.mp4','.mov','.gif')):
-                            ac = VideoFileClip(ad)
-                        else:
-                            ac = ImageClip(ad).with_duration(15)
-                        
-                        ac = safe_resize(ac, TARGET_RES)
-                        ac = ac.with_start(final_part.duration)
-                        final_part = CompositeVideoClip([final_part, ac])
-                    except: pass
-                
-                prog.progress(60)
-                
-                # Write file with logger=None to avoid server crashes
-                final_part.write_videofile(temp_filename, codec='libx264', audio_codec='aac', fps=clip.fps, logger=None)
-                
-                # Close clips to free memory
-                clip.close()
-                final_part.close()
-                
-                shutil.move(temp_filename, final_path)
-                
-                prog.progress(100)
-                status.success("Sent to TV!")
-                
-                for f in temp_imgs: 
-                    if os.path.exists(f): os.remove(f)
-                    
-            except Exception as e:
-                st.error(f"Error: {e}")
-
-# --- MODE 2: DISPLAY SCREEN (Stick) ---
-elif url_role == "display":
-    st.markdown("""
-        <style>
-            [data-testid="stSidebar"] {display: none;}
-            section.main {padding-top: 0px;}
-            header {visibility: hidden;}
-            footer {visibility: hidden;}
-            #MainMenu {visibility: hidden;}
-        </style>
-    """, unsafe_allow_html=True)
-
-    if not url_id:
-        st.error("Setup Error: No Stick ID found in URL.")
-        st.stop()
-
-    target_file = os.path.join(OUTPUT_FOLDER, f"{url_id}.mp4")
-    
-    # 1. Check if a video exists for this ID
-    if os.path.exists(target_file):
-        
-        # 2. Get the modification time (to detect updates)
-        file_stats = os.stat(target_file)
-        current_mod_time = file_stats.st_mtime
-        
-        # 3. Display the video with LOOP enabled
-        # autoplay=True, loop=True makes it run forever
-        st.video(target_file, autoplay=True, loop=True)
-        
-        # 4. BACKGROUND WATCHER (Smart Update)
-        # This loop runs silently while the video plays.
-        # It waits for the file to change.
-        while True:
-            time.sleep(5) # Check every 5 seconds
-            
-            # Check file again
-            if os.path.exists(target_file):
-                check_stats = os.stat(target_file)
-                # If timestamp is different, break loop and refresh page
-                if check_stats.st_mtime > current_mod_time:
-                    st.rerun()
+            st.rerun() # Just keep the app alive
             
     else:
-        st.info(f"Ready. Waiting for first video... (ID: {url_id})")
-        # Auto-refresh to check if file appears
-        time.sleep(3)
+        st.info("Waiting for first update...")
+        time.sleep(5)
         st.rerun()
-
-# --- MODE 3: ADMIN ---
-else:
-    st.title("🏭 Factory Setup")
-    
-    if "CHANGE-THIS" in BASE_URL:
-        st.error("⚠️ WARNING: Please edit Line 11 of webapp.py and paste your Render URL.")
-        
-    if st.button("Generate New Device ID"):
-        new_id = str(uuid.uuid4())[:8] 
-        st.success(f"Created ID: {new_id}")
-        st.code(f"{BASE_URL}/?role=display&id={new_id}")
-        st.code(f"{BASE_URL}/?role=owner&id={new_id}")
