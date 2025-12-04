@@ -11,7 +11,9 @@ import gc
 BASE_URL = "https://greeting-app-wh2w.onrender.com" 
 TEMPLATE_FILE = "HB Layout1.mp4"
 OUTPUT_FOLDER = "generated_videos"
-TARGET_RES = (1920, 1080) 
+TARGET_RES = (1920, 1080)
+# --- FIXED: ADDED MISSING VARIABLE ---
+TARGET_FILE = "video.mp4"
 
 # --- SAFE SETUP ---
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
@@ -58,7 +60,7 @@ def get_font_and_metrics(text, max_width, start_size):
         total_w = 0
         kerning = int(font_size * 0.06)
         for char in text:
-            cw = int(font_size * 0.25) if char == " " else (dummy_draw.textbbox((0, 0), char, font=font)[2] - dummy_draw.textbbox((0, 0), char, font=font)[0])
+            cw = int(font_size * 0.25) if char == " " else (dummy_draw.textbbox((0, 0), char, font)[2] - dummy_draw.textbbox((0, 0), char, font)[0])
             total_w += cw
         if len(text) > 1: total_w -= (len(text) - 1) * kerning
         if total_w < max_width or font_size < 20: break
@@ -76,12 +78,12 @@ def create_letter_image(char, font, filename):
     img = Image.new('RGBA', (int(char_w + 200), 600), (255, 255, 255, 0))
     d = ImageDraw.Draw(img)
     
-    # Draw Outline (Fixed Syntax Error Here)
+    # Draw Outline
     for x in range(-3, 4):
         for y in range(-3, 4): 
             d.text((100+x, 400+y), char, font=font, fill="black", anchor="ls")
             
-    # Draw Fill (Fixed Syntax Error Here)
+    # Draw Fill
     d.text((100, 400), char, font=font, fill="white", anchor="ls")
     
     img.rotate(0, expand=False, resample=Image.BICUBIC).save(filename)
