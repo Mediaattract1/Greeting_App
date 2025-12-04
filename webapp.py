@@ -11,9 +11,10 @@ import gc
 BASE_URL = "https://greeting-app-wh2w.onrender.com" 
 TEMPLATE_FILE = "HB Layout1.mp4"
 OUTPUT_FOLDER = "generated_videos"
-TARGET_RES = (1920, 1080)
-# --- FIXED: ADDED MISSING VARIABLE ---
-TARGET_FILE = "video.mp4"
+
+# --- MEMORY FIX: REDUCE TO 720p ---
+# 1080p is too big for the $7 server RAM. 720p is safe.
+TARGET_RES = (1280, 720) 
 
 # --- SAFE SETUP ---
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
@@ -60,7 +61,7 @@ def get_font_and_metrics(text, max_width, start_size):
         total_w = 0
         kerning = int(font_size * 0.06)
         for char in text:
-            cw = int(font_size * 0.25) if char == " " else (dummy_draw.textbbox((0, 0), char, font)[2] - dummy_draw.textbbox((0, 0), char, font)[0])
+            cw = int(font_size * 0.25) if char == " " else (dummy_draw.textbbox((0, 0), char, font=font)[2] - dummy_draw.textbbox((0, 0), char, font=font)[0])
             total_w += cw
         if len(text) > 1: total_w -= (len(text) - 1) * kerning
         if total_w < max_width or font_size < 20: break
@@ -75,16 +76,20 @@ def create_letter_image(char, font, filename):
     bbox = dummy.textbbox((0, 0), char, font=font, anchor="ls")
     char_w = bbox[2] - bbox[0]
     
-    img = Image.new('RGBA', (int(char_w + 200), 600), (255, 255, 255, 0))
+    # Reduced canvas height for 720p to save memory
+    canvas_h = 400
+    canvas_base = 300
+    
+    img = Image.new('RGBA', (int(char_w + 200), canvas_h), (255, 255, 255, 0))
     d = ImageDraw.Draw(img)
     
     # Draw Outline
     for x in range(-3, 4):
         for y in range(-3, 4): 
-            d.text((100+x, 400+y), char, font=font, fill="black", anchor="ls")
+            d.text((100+x, canvas_base+y), char, font=font, fill="black", anchor="ls")
             
     # Draw Fill
-    d.text((100, 400), char, font=font, fill="white", anchor="ls")
+    d.text((100, canvas_base), char, font=font, fill="white", anchor="ls")
     
     img.rotate(0, expand=False, resample=Image.BICUBIC).save(filename)
     return char_w
@@ -109,14 +114,18 @@ if mode == "update":
     if submit and name_input:
         status = st.empty()
         prog = st.progress(0)
-        status.info("Processing... Please wait 30s.")
+        status.info("Processing... Please wait.")
         
         try:
             full_text = name_input + "!"
+            TARGET_FILE = "video.mp4"
             temp_out = "temp_render.mp4"
+            
+            # MEMORY CLEANUP
             gc.collect()
 
             clip = VideoFileClip(TEMPLATE_FILE)
+            # RESIZE TO 720p IMMEDIATELY
             clip = safe_resize(clip, TARGET_RES)
             
             # Font & Metrics
@@ -135,7 +144,8 @@ if mode == "update":
             total_w -= (len(full_text)-1)*kerning
             
             curr_x = (clip.w * 0.65) - (total_w / 2)
-            target_y = (clip.h * 0.75) - 400
+            # Adjust Y for 720p (300 is the new baseline offset)
+            target_y = (clip.h * 0.75) - 300
             
             clips = [clip]
             temp_imgs = []
@@ -178,8 +188,17 @@ if mode == "update":
             
             prog.progress(50)
             
-            # WRITE (Safe Mode)
-            final.write_videofile(temp_out, codec='libx264', audio_codec='aac', fps=clip.fps, logger=None, threads=1)
+            # WRITE (720p Safe Mode)
+            # preset='ultrafast' uses less CPU/RAM but makes slightly larger files
+            final.write_videofile(
+                temp_out, 
+                codec='libx264', 
+                audio_codec='aac', 
+                fps=24, # Reduced FPS to 24 to save memory
+                preset='ultrafast', 
+                logger=None, 
+                threads=1
+            )
             
             clip.close()
             final.close()
@@ -199,6 +218,7 @@ if mode == "update":
 
 # === DISPLAY MODE (The TV Stick) ===
 else:
+    TARGET_FILE = "video.mp4"
     real_target = os.path.join(OUTPUT_FOLDER, TARGET_FILE)
     
     if os.path.exists(real_target):
