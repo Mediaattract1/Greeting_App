@@ -8,10 +8,13 @@ import shutil
 import gc
 
 # --- CONFIGURATION ---
-# The single file everyone watches
-TARGET_FILE = "video.mp4" 
+BASE_URL = "https://greeting-app-wh2w.onrender.com" 
 TEMPLATE_FILE = "HB Layout1.mp4"
+OUTPUT_FOLDER = "generated_videos"
 TARGET_RES = (1920, 1080) 
+
+# --- SAFE SETUP ---
+os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
 # --- MOVIEPY IMPORT FIXER ---
 try:
@@ -50,12 +53,12 @@ def get_font_and_metrics(text, max_width, start_size):
         try: font = ImageFont.truetype("arial.ttf", font_size)
         except: font = ImageFont.load_default()
 
-    dummy = ImageDraw.Draw(Image.new('RGB', (1, 1)))
+    dummy_draw = ImageDraw.Draw(Image.new('RGB', (1, 1)))
     while True:
         total_w = 0
         kerning = int(font_size * 0.06)
         for char in text:
-            cw = int(font_size * 0.25) if char == " " else (dummy.textbbox((0, 0), char, font)[2] - dummy.textbbox((0, 0), char, font)[0])
+            cw = int(font_size * 0.25) if char == " " else (dummy_draw.textbbox((0, 0), char, font=font)[2] - dummy_draw.textbbox((0, 0), char, font=font)[0])
             total_w += cw
         if len(text) > 1: total_w -= (len(text) - 1) * kerning
         if total_w < max_width or font_size < 20: break
@@ -66,12 +69,21 @@ def get_font_and_metrics(text, max_width, start_size):
 
 def create_letter_image(char, font, filename):
     dummy = ImageDraw.Draw(Image.new('RGB', (1, 1)))
-    char_w = dummy.textbbox((0, 0), char, font=font, anchor="ls")[2] - dummy.textbbox((0, 0), char, font, anchor="ls")[0]
+    # Calculate width
+    bbox = dummy.textbbox((0, 0), char, font=font, anchor="ls")
+    char_w = bbox[2] - bbox[0]
+    
     img = Image.new('RGBA', (int(char_w + 200), 600), (255, 255, 255, 0))
     d = ImageDraw.Draw(img)
-    for x in range(-3,4):
-        for y in range(-3,4): d.text((100+x, 400+y), char, font, fill="black", anchor="ls")
-    d.text((100, 400), char, font, fill="white", anchor="ls")
+    
+    # Draw Outline (Fixed Syntax Error Here)
+    for x in range(-3, 4):
+        for y in range(-3, 4): 
+            d.text((100+x, 400+y), char, font=font, fill="black", anchor="ls")
+            
+    # Draw Fill (Fixed Syntax Error Here)
+    d.text((100, 400), char, font=font, fill="white", anchor="ls")
+    
     img.rotate(0, expand=False, resample=Image.BICUBIC).save(filename)
     return char_w
 
@@ -94,6 +106,7 @@ if mode == "update":
     
     if submit and name_input:
         status = st.empty()
+        prog = st.progress(0)
         status.info("Processing... Please wait 30s.")
         
         try:
@@ -110,7 +123,13 @@ if mode == "update":
             
             # Width Calc
             dummy = ImageDraw.Draw(Image.new('RGB', (1,1)))
-            total_w = sum([int(font_size*0.25) if c==" " else (dummy.textbbox((0,0),c,font)[2]-dummy.textbbox((0,0),c,font)[0]) for c in full_text])
+            total_w = 0
+            for c in full_text:
+                if c == " ":
+                    total_w += int(font_size * 0.25)
+                else:
+                    bbox = dummy.textbbox((0,0), c, font=font)
+                    total_w += bbox[2] - bbox[0]
             total_w -= (len(full_text)-1)*kerning
             
             curr_x = (clip.w * 0.65) - (total_w / 2)
@@ -120,6 +139,7 @@ if mode == "update":
             temp_imgs = []
             
             # Generate Letters
+            prog.progress(20)
             for i, char in enumerate(full_text):
                 if char == " ":
                     curr_x += int(font_size*0.25) - kerning
@@ -127,8 +147,11 @@ if mode == "update":
                 fname = f"t_{i}.png"
                 temp_imgs.append(fname)
                 w = create_letter_image(char, font, fname)
+                
                 lc = ImageClip(fname).with_duration(clip.duration)
-                try: lc = lc.with_effects([FadeOut(1.0)]) if FadeOut else lc.fadeout(1.0)
+                try: 
+                    if FadeOut: lc = lc.with_effects([FadeOut(1.0)]) 
+                    else: lc = lc.fadeout(1.0)
                 except: pass
                 
                 st_t = 2.0 + (i*0.1)
@@ -151,6 +174,8 @@ if mode == "update":
                     final = CompositeVideoClip([final, ac])
                 except: pass
             
+            prog.progress(50)
+            
             # WRITE (Safe Mode)
             final.write_videofile(temp_out, codec='libx264', audio_codec='aac', fps=clip.fps, logger=None, threads=1)
             
@@ -159,11 +184,12 @@ if mode == "update":
             gc.collect()
             
             # Overwrite the live file
-            shutil.move(temp_out, TARGET_FILE)
+            shutil.move(temp_out, os.path.join(OUTPUT_FOLDER, TARGET_FILE))
             
             for f in temp_imgs: 
                 if os.path.exists(f): os.remove(f)
-                
+            
+            prog.progress(100)
             status.success("Success! TV will update shortly.")
             
         except Exception as e:
@@ -171,24 +197,24 @@ if mode == "update":
 
 # === DISPLAY MODE (The TV Stick) ===
 else:
-    if os.path.exists(TARGET_FILE):
+    real_target = os.path.join(OUTPUT_FOLDER, TARGET_FILE)
+    
+    if os.path.exists(real_target):
         # 1. Play the video in a loop
-        st.video(TARGET_FILE, autoplay=True, loop=True)
+        st.video(real_target, autoplay=True, loop=True)
         
         # 2. Check for updates silently
-        # We store the file's "Last Modified" time in the session
-        current_stats = os.stat(TARGET_FILE).st_mtime
+        current_stats = os.stat(real_target).st_mtime
         
         if "last_version" not in st.session_state:
             st.session_state.last_version = current_stats
             
-        # Wait a bit, then check if file changed
         time.sleep(10)
         
         if current_stats > st.session_state.last_version:
-            st.rerun() # Reload page to pick up new video
+            st.rerun() 
         else:
-            st.rerun() # Just keep the app alive
+            st.rerun() 
             
     else:
         st.info("Waiting for first update...")
