@@ -8,15 +8,13 @@ import shutil
 import uuid
 
 # --- CONFIGURATION ---
-# PASTE YOUR REAL RENDER URL HERE (No trailing slash)
-BASE_URL = "https://greeting-app-wh2w.onrender.com"
-
+BASE_URL = "https://greeting-app-wh2w.onrender.com" 
 TEMPLATE_FILE = "HB Layout1.mp4"
 OUTPUT_FOLDER = "generated_videos"
 TARGET_RES = (1920, 1080) 
 
-if not os.path.exists(OUTPUT_FOLDER):
-    os.makedirs(OUTPUT_FOLDER)
+# --- FIX: THREAD-SAFE FOLDER CREATION ---
+os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
 # --- MOVIEPY IMPORT FIXER ---
 try:
@@ -214,8 +212,13 @@ if url_role == "owner":
                 
                 prog.progress(60)
                 
-                # Write file
+                # Write file with logger=None to avoid server crashes
                 final_part.write_videofile(temp_filename, codec='libx264', audio_codec='aac', fps=clip.fps, logger=None)
+                
+                # Close clips to free memory
+                clip.close()
+                final_part.close()
+                
                 shutil.move(temp_filename, final_path)
                 
                 prog.progress(100)
@@ -245,31 +248,42 @@ elif url_role == "display":
 
     target_file = os.path.join(OUTPUT_FOLDER, f"{url_id}.mp4")
     
+    # 1. Check if a video exists for this ID
     if os.path.exists(target_file):
+        
+        # 2. Get the modification time (to detect updates)
         file_stats = os.stat(target_file)
         current_mod_time = file_stats.st_mtime
         
-        if "last_played_time" not in st.session_state:
-            st.session_state.last_played_time = 0
-
-        if current_mod_time > st.session_state.last_played_time:
-            st.video(target_file, autoplay=True)
-            st.session_state.last_played_time = current_mod_time
-        else:
-            st.info(f"Ready. ID: {url_id}")
+        # 3. Display the video with LOOP enabled
+        # autoplay=True, loop=True makes it run forever
+        st.video(target_file, autoplay=True, loop=True)
+        
+        # 4. BACKGROUND WATCHER (Smart Update)
+        # This loop runs silently while the video plays.
+        # It waits for the file to change.
+        while True:
+            time.sleep(5) # Check every 5 seconds
+            
+            # Check file again
+            if os.path.exists(target_file):
+                check_stats = os.stat(target_file)
+                # If timestamp is different, break loop and refresh page
+                if check_stats.st_mtime > current_mod_time:
+                    st.rerun()
+            
     else:
-        st.title("Waiting for setup...")
-        st.write(f"Device ID: {url_id}")
-
-    time.sleep(3)
-    st.rerun()
+        st.info(f"Ready. Waiting for first video... (ID: {url_id})")
+        # Auto-refresh to check if file appears
+        time.sleep(3)
+        st.rerun()
 
 # --- MODE 3: ADMIN ---
 else:
     st.title("🏭 Factory Setup")
     
     if "CHANGE-THIS" in BASE_URL:
-        st.error("⚠️ WARNING: Please edit Line 12 of webapp.py and paste your Render URL.")
+        st.error("⚠️ WARNING: Please edit Line 11 of webapp.py and paste your Render URL.")
         
     if st.button("Generate New Device ID"):
         new_id = str(uuid.uuid4())[:8] 
