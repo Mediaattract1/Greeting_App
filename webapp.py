@@ -89,38 +89,57 @@ def create_letter_image(char, font, filename):
 # --- APP LOGIC ---
 st.set_page_config(page_title="Sign Manager", layout="wide", initial_sidebar_state="collapsed")
 
-# Global CSS to force black background (Hides the white flash)
-st.markdown("""
-    <style>
-    body {background-color: black;}
-    .stApp {background-color: black;}
-    [data-testid="stSidebar"],header,footer,#MainMenu {display:none;}
-    </style>
-    """, unsafe_allow_html=True)
-
 query_params = st.query_params
 mode = query_params.get("mode", "display")
 
+# === CSS: HIDE MENUS & BRIGHTEN TEXT ===
+# This fixes the "Grey Text" issue by forcing labels to be white
+hide_streamlit_style = """
+    <style>
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    [data-testid="stToolbar"] {visibility: hidden;}
+    [data-testid="stDecoration"] {display: none;}
+    [data-testid="stStatusWidget"] {display: none;}
+    
+    /* Force Background Black */
+    .stApp {background-color: black;}
+    
+    /* Force Text White */
+    p, label, h1, h2, h3 {color: white !important;}
+    
+    /* Center the Form */
+    .block-container {
+        padding-top: 2rem;
+    }
+    </style>
+"""
+st.markdown(hide_streamlit_style, unsafe_allow_html=True)
+
 # === UPDATE MODE (The Controller) ===
 if mode == "update":
-    st.title("Update Sign")
+    st.title("Create Greeting")
     
     with st.form("update_form"):
         name_input = st.text_input("Enter Name:", max_chars=20).strip()
-        submit = st.form_submit_button("Update TV")
+        # Button says "Create"
+        submit = st.form_submit_button("Create", type="primary")
     
     if submit and name_input:
         status = st.empty()
-        status.info("Processing 1080p Video...")
+        prog = st.progress(0)
+        status.info("Processing... (Please wait)")
         
         try:
             full_text = name_input + "!"
             TARGET_FILE = "video.mp4"
             temp_out = "temp_render.mp4"
+            
             gc.collect()
 
             if not os.path.exists(TEMPLATE_FILE):
-                st.error(f"Missing {TEMPLATE_FILE}")
+                st.error(f"Missing {TEMPLATE_FILE}. Please upload the 1080p file to GitHub.")
                 st.stop()
 
             clip = VideoFileClip(TEMPLATE_FILE)
@@ -170,6 +189,8 @@ if mode == "update":
                     final = CompositeVideoClip([final, ac])
                 except: pass
             
+            prog.progress(50)
+            
             final.write_videofile(
                 temp_out, 
                 codec='libx264', 
@@ -187,7 +208,8 @@ if mode == "update":
             for f in temp_imgs: 
                 if os.path.exists(f): os.remove(f)
             
-            status.success("Success! TV will update.")
+            prog.progress(100)
+            status.success("Completed")
             
         except Exception as e:
             status.error(f"Error: {e}")
@@ -198,11 +220,12 @@ else:
     real_target = os.path.join(OUTPUT_FOLDER, TARGET_FILE)
     
     if os.path.exists(real_target):
-        # Load video into memory so we can embed it directly in HTML
-        # This allows us to use a custom HTML5 player that we can style perfectly
         video_bytes = open(real_target, 'rb').read()
         video_b64 = base64.b64encode(video_bytes).decode()
         
+        # HTML PLAYER FIX:
+        # object-fit: contain -> Ensures entire video fits (adds black bars if ratio mismatch)
+        # width/height: 100% -> Ensures player uses full window
         html_code = f"""
         <style>
         body {{ 
@@ -210,37 +233,50 @@ else:
             margin: 0; 
             padding: 0;
             overflow: hidden; 
+            cursor: none; 
+        }}
+        .video-container {{
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: black;
         }}
         video {{
-            position: fixed;
-            top: 50%;
-            left: 50%;
-            min-width: 100%;
-            min-height: 100%;
-            width: auto;
-            height: auto;
-            z-index: -100;
-            transform: translateX(-50%) translateY(-50%);
-            object-fit: contain; /* Forces whole video to show, adds black bars if needed */
+            width: 100%;
+            height: 100%;
+            object-fit: contain; 
+            pointer-events: none;
         }}
         </style>
         
-        <video autoplay loop muted playsinline>
-            <source src="data:video/mp4;base64,{video_b64}" type="video/mp4">
-        </video>
+        <div class="video-container">
+            <video autoplay loop muted playsinline>
+                <source src="data:video/mp4;base64,{video_b64}" type="video/mp4">
+            </video>
+        </div>
         
         <script>
-        // Check for updates every 15 seconds by reloading
-        // Since background is black, the reload should be invisible
         setTimeout(function(){{
             location.reload();
         }}, 15000);
         </script>
         """
         
-        # Render the HTML player
+        current_stats = os.stat(real_target).st_mtime
+        if "last_version" not in st.session_state:
+            st.session_state.last_version = current_stats
+            
         st.components.v1.html(html_code, height=1080, scrolling=False)
         
+        if current_stats > st.session_state.last_version:
+            st.session_state.last_version = current_stats
+            st.rerun()
+            
     else:
         st.info("Waiting for first update...")
         time.sleep(5)
