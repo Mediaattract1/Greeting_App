@@ -6,15 +6,13 @@ import sys
 import time
 import shutil
 import gc
+import base64
 
 # --- CONFIGURATION ---
 BASE_URL = "https://greeting-app-wh2w.onrender.com" 
-TEMPLATE_FILE = "HB Layout1.mp4"
+TEMPLATE_FILE = "HB Layout1.mp4" # We are back to 1080p!
 OUTPUT_FOLDER = "generated_videos"
-
-# --- MEMORY FIX: REDUCE TO 720p ---
-# 1080p is too big for the $7 server RAM. 720p is safe.
-TARGET_RES = (1280, 720) 
+TARGET_RES = (1920, 1080) 
 
 # --- SAFE SETUP ---
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
@@ -39,7 +37,7 @@ except ImportError:
     ImageClip = mp.ImageClip
     FadeOut = None
 
-# --- HELPERS ---
+# --- HELPER FUNCTIONS ---
 def safe_resize(clip, size):
     try: return clip.resized(new_size=size)
     except: return clip.resize(newsize=size)
@@ -61,7 +59,7 @@ def get_font_and_metrics(text, max_width, start_size):
         total_w = 0
         kerning = int(font_size * 0.06)
         for char in text:
-            cw = int(font_size * 0.25) if char == " " else (dummy_draw.textbbox((0, 0), char, font=font)[2] - dummy_draw.textbbox((0, 0), char, font=font)[0])
+            cw = int(font_size * 0.25) if char == " " else (dummy_draw.textbbox((0, 0), char, font)[2] - dummy_draw.textbbox((0, 0), char, font)[0])
             total_w += cw
         if len(text) > 1: total_w -= (len(text) - 1) * kerning
         if total_w < max_width or font_size < 20: break
@@ -72,36 +70,47 @@ def get_font_and_metrics(text, max_width, start_size):
 
 def create_letter_image(char, font, filename):
     dummy = ImageDraw.Draw(Image.new('RGB', (1, 1)))
-    # Calculate width
     bbox = dummy.textbbox((0, 0), char, font=font, anchor="ls")
     char_w = bbox[2] - bbox[0]
     
-    # Reduced canvas height for 720p to save memory
-    canvas_h = 400
-    canvas_base = 300
+    # 1080p Canvas Size
+    canvas_h = 600
+    canvas_base = 400
     
     img = Image.new('RGBA', (int(char_w + 200), canvas_h), (255, 255, 255, 0))
     d = ImageDraw.Draw(img)
-    
-    # Draw Outline
     for x in range(-3, 4):
         for y in range(-3, 4): 
             d.text((100+x, canvas_base+y), char, font=font, fill="black", anchor="ls")
-            
-    # Draw Fill
     d.text((100, canvas_base), char, font=font, fill="white", anchor="ls")
     
     img.rotate(0, expand=False, resample=Image.BICUBIC).save(filename)
     return char_w
 
 # --- APP LOGIC ---
-st.set_page_config(page_title="Sign Manager", layout="centered")
-
-# CSS to hide menus for the TV
-st.markdown("""<style>[data-testid="stSidebar"],header,footer,#MainMenu{display:none;}</style>""", unsafe_allow_html=True)
+st.set_page_config(page_title="Sign Manager", layout="wide", initial_sidebar_state="collapsed")
 
 query_params = st.query_params
 mode = query_params.get("mode", "display")
+
+# === CSS INVISIBILITY CLOAK (Hides Logos & Menus) ===
+hide_streamlit_style = """
+    <style>
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    [data-testid="stToolbar"] {visibility: hidden;}
+    [data-testid="stDecoration"] {display: none;}
+    [data-testid="stStatusWidget"] {display: none;}
+    .block-container {
+        padding-top: 0rem;
+        padding-bottom: 0rem;
+        padding-left: 0rem;
+        padding-right: 0rem;
+    }
+    </style>
+"""
+st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
 # === UPDATE MODE (The Controller) ===
 if mode == "update":
@@ -113,45 +122,35 @@ if mode == "update":
     
     if submit and name_input:
         status = st.empty()
-        prog = st.progress(0)
-        status.info("Processing... Please wait.")
+        status.info("Processing 1080p Video... (Takes ~15s)")
         
         try:
             full_text = name_input + "!"
             TARGET_FILE = "video.mp4"
             temp_out = "temp_render.mp4"
             
-            # MEMORY CLEANUP
             gc.collect()
 
+            if not os.path.exists(TEMPLATE_FILE):
+                st.error(f"Missing {TEMPLATE_FILE}. Please upload the 1080p file to GitHub.")
+                st.stop()
+
             clip = VideoFileClip(TEMPLATE_FILE)
-            # RESIZE TO 720p IMMEDIATELY
             clip = safe_resize(clip, TARGET_RES)
             
-            # Font & Metrics
             font, font_size = get_font_and_metrics(full_text, clip.w * 0.45, int(clip.h * 0.11))
             kerning = int(font_size * 0.06)
             
-            # Width Calc
             dummy = ImageDraw.Draw(Image.new('RGB', (1,1)))
-            total_w = 0
-            for c in full_text:
-                if c == " ":
-                    total_w += int(font_size * 0.25)
-                else:
-                    bbox = dummy.textbbox((0,0), c, font=font)
-                    total_w += bbox[2] - bbox[0]
+            total_w = sum([int(font_size*0.25) if c==" " else (dummy.textbbox((0,0),c,font)[2]-dummy.textbbox((0,0),c,font)[0]) for c in full_text])
             total_w -= (len(full_text)-1)*kerning
             
             curr_x = (clip.w * 0.65) - (total_w / 2)
-            # Adjust Y for 720p (300 is the new baseline offset)
-            target_y = (clip.h * 0.75) - 300
+            target_y = (clip.h * 0.75) - 400
             
             clips = [clip]
             temp_imgs = []
             
-            # Generate Letters
-            prog.progress(20)
             for i, char in enumerate(full_text):
                 if char == " ":
                     curr_x += int(font_size*0.25) - kerning
@@ -161,9 +160,7 @@ if mode == "update":
                 w = create_letter_image(char, font, fname)
                 
                 lc = ImageClip(fname).with_duration(clip.duration)
-                try: 
-                    if FadeOut: lc = lc.with_effects([FadeOut(1.0)]) 
-                    else: lc = lc.fadeout(1.0)
+                try: lc = lc.with_effects([FadeOut(1.0)]) if FadeOut else lc.fadeout(1.0)
                 except: pass
                 
                 st_t = 2.0 + (i*0.1)
@@ -177,7 +174,6 @@ if mode == "update":
 
             final = CompositeVideoClip(clips)
             
-            # Ad
             ad = get_ad_file()
             if ad:
                 try:
@@ -186,57 +182,89 @@ if mode == "update":
                     final = CompositeVideoClip([final, ac])
                 except: pass
             
-            prog.progress(50)
-            
-            # WRITE (720p Safe Mode)
-            # preset='ultrafast' uses less CPU/RAM but makes slightly larger files
+            # WRITE 1080p (Standard Settings for Quality)
             final.write_videofile(
                 temp_out, 
                 codec='libx264', 
                 audio_codec='aac', 
-                fps=24, # Reduced FPS to 24 to save memory
-                preset='ultrafast', 
-                logger=None, 
-                threads=1
+                fps=24, 
+                logger=None
             )
             
             clip.close()
             final.close()
             gc.collect()
             
-            # Overwrite the live file
             shutil.move(temp_out, os.path.join(OUTPUT_FOLDER, TARGET_FILE))
             
             for f in temp_imgs: 
                 if os.path.exists(f): os.remove(f)
             
-            prog.progress(100)
-            status.success("Success! TV will update shortly.")
+            status.success("Success! TV will update.")
             
         except Exception as e:
             status.error(f"Error: {e}")
 
-# === DISPLAY MODE (The TV Stick) ===
+# === DISPLAY MODE (The Kiosk Player) ===
 else:
     TARGET_FILE = "video.mp4"
     real_target = os.path.join(OUTPUT_FOLDER, TARGET_FILE)
     
     if os.path.exists(real_target):
-        # 1. Play the video in a loop
-        st.video(real_target, autoplay=True, loop=True)
+        # KIOSK PLAYER (HTML5 Hack)
+        # - Removes controls
+        # - Forces Loop/Autoplay
+        # - Hides Cursor
+        # - Fills Screen
         
-        # 2. Check for updates silently
+        video_bytes = open(real_target, 'rb').read()
+        video_b64 = base64.b64encode(video_bytes).decode()
+        
+        html_code = f"""
+        <style>
+        body {{ 
+            background-color: black; 
+            margin: 0; 
+            overflow: hidden; 
+            cursor: none; 
+        }}
+        video {{
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            object-fit: cover;
+            pointer-events: none; /* Prevents clicking/pausing */
+        }}
+        </style>
+        
+        <video autoplay loop muted playsinline>
+            <source src="data:video/mp4;base64,{video_b64}" type="video/mp4">
+        </video>
+        
+        <script>
+        // Reload page every 15 seconds to check for updates
+        // This replaces the Python loop with a cleaner Browser loop
+        setTimeout(function(){{
+            location.reload();
+        }}, 15000);
+        </script>
+        """
+        
+        # Check modification time to see if we actually need to reload content
         current_stats = os.stat(real_target).st_mtime
-        
         if "last_version" not in st.session_state:
             st.session_state.last_version = current_stats
             
-        time.sleep(10)
+        # If file hasn't changed, we just show the player
+        # The JavaScript inside the HTML handles the periodic refresh
+        st.components.v1.html(html_code, height=1080)
         
+        # Update state logic
         if current_stats > st.session_state.last_version:
-            st.rerun() 
-        else:
-            st.rerun() 
+            st.session_state.last_version = current_stats
+            st.rerun()
             
     else:
         st.info("Waiting for first update...")
