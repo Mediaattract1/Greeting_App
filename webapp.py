@@ -10,7 +10,7 @@ import base64
 
 # --- CONFIGURATION ---
 BASE_URL = "https://greeting-app-wh2w.onrender.com" 
-TEMPLATE_FILE = "HB Layout1.mp4" # We are back to 1080p!
+TEMPLATE_FILE = "HB Layout1.mp4"
 OUTPUT_FOLDER = "generated_videos"
 TARGET_RES = (1920, 1080) 
 
@@ -73,7 +73,6 @@ def create_letter_image(char, font, filename):
     bbox = dummy.textbbox((0, 0), char, font=font, anchor="ls")
     char_w = bbox[2] - bbox[0]
     
-    # 1080p Canvas Size
     canvas_h = 600
     canvas_base = 400
     
@@ -90,27 +89,17 @@ def create_letter_image(char, font, filename):
 # --- APP LOGIC ---
 st.set_page_config(page_title="Sign Manager", layout="wide", initial_sidebar_state="collapsed")
 
+# Global CSS to force black background (Hides the white flash)
+st.markdown("""
+    <style>
+    body {background-color: black;}
+    .stApp {background-color: black;}
+    [data-testid="stSidebar"],header,footer,#MainMenu {display:none;}
+    </style>
+    """, unsafe_allow_html=True)
+
 query_params = st.query_params
 mode = query_params.get("mode", "display")
-
-# === CSS INVISIBILITY CLOAK (Hides Logos & Menus) ===
-hide_streamlit_style = """
-    <style>
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    header {visibility: hidden;}
-    [data-testid="stToolbar"] {visibility: hidden;}
-    [data-testid="stDecoration"] {display: none;}
-    [data-testid="stStatusWidget"] {display: none;}
-    .block-container {
-        padding-top: 0rem;
-        padding-bottom: 0rem;
-        padding-left: 0rem;
-        padding-right: 0rem;
-    }
-    </style>
-"""
-st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
 # === UPDATE MODE (The Controller) ===
 if mode == "update":
@@ -122,17 +111,16 @@ if mode == "update":
     
     if submit and name_input:
         status = st.empty()
-        status.info("Processing 1080p Video... (Takes ~15s)")
+        status.info("Processing 1080p Video...")
         
         try:
             full_text = name_input + "!"
             TARGET_FILE = "video.mp4"
             temp_out = "temp_render.mp4"
-            
             gc.collect()
 
             if not os.path.exists(TEMPLATE_FILE):
-                st.error(f"Missing {TEMPLATE_FILE}. Please upload the 1080p file to GitHub.")
+                st.error(f"Missing {TEMPLATE_FILE}")
                 st.stop()
 
             clip = VideoFileClip(TEMPLATE_FILE)
@@ -182,7 +170,6 @@ if mode == "update":
                     final = CompositeVideoClip([final, ac])
                 except: pass
             
-            # WRITE 1080p (Standard Settings for Quality)
             final.write_videofile(
                 temp_out, 
                 codec='libx264', 
@@ -211,12 +198,8 @@ else:
     real_target = os.path.join(OUTPUT_FOLDER, TARGET_FILE)
     
     if os.path.exists(real_target):
-        # KIOSK PLAYER (HTML5 Hack)
-        # - Removes controls
-        # - Forces Loop/Autoplay
-        # - Hides Cursor
-        # - Fills Screen
-        
+        # Load video into memory so we can embed it directly in HTML
+        # This allows us to use a custom HTML5 player that we can style perfectly
         video_bytes = open(real_target, 'rb').read()
         video_b64 = base64.b64encode(video_bytes).decode()
         
@@ -225,17 +208,20 @@ else:
         body {{ 
             background-color: black; 
             margin: 0; 
+            padding: 0;
             overflow: hidden; 
-            cursor: none; 
         }}
         video {{
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100vw;
-            height: 100vh;
-            object-fit: cover;
-            pointer-events: none; /* Prevents clicking/pausing */
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            min-width: 100%;
+            min-height: 100%;
+            width: auto;
+            height: auto;
+            z-index: -100;
+            transform: translateX(-50%) translateY(-50%);
+            object-fit: contain; /* Forces whole video to show, adds black bars if needed */
         }}
         </style>
         
@@ -244,28 +230,17 @@ else:
         </video>
         
         <script>
-        // Reload page every 15 seconds to check for updates
-        // This replaces the Python loop with a cleaner Browser loop
+        // Check for updates every 15 seconds by reloading
+        // Since background is black, the reload should be invisible
         setTimeout(function(){{
             location.reload();
         }}, 15000);
         </script>
         """
         
-        # Check modification time to see if we actually need to reload content
-        current_stats = os.stat(real_target).st_mtime
-        if "last_version" not in st.session_state:
-            st.session_state.last_version = current_stats
-            
-        # If file hasn't changed, we just show the player
-        # The JavaScript inside the HTML handles the periodic refresh
-        st.components.v1.html(html_code, height=1080)
+        # Render the HTML player
+        st.components.v1.html(html_code, height=1080, scrolling=False)
         
-        # Update state logic
-        if current_stats > st.session_state.last_version:
-            st.session_state.last_version = current_stats
-            st.rerun()
-            
     else:
         st.info("Waiting for first update...")
         time.sleep(5)
