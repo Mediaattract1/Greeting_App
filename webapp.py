@@ -47,61 +47,81 @@ def get_ad_file():
         if os.path.exists("ad" + ext): return "ad" + ext
     return None
 
-def get_font_and_metrics(text, max_width, start_size):
-    font_size = start_size
+# --- TEXT ENGINE (Reverted to the Desktop Logic you liked) ---
+def get_text_width_with_kerning(draw, text, font, kerning):
+    total_width = 0
+    for char in text:
+        bbox = draw.textbbox((0, 0), char, font=font)
+        char_w = bbox[2] - bbox[0]
+        total_width += char_w
+    if len(text) > 1:
+        total_width -= (len(text) - 1) * kerning
+    return total_width
+
+def create_text_image_file(text, video_width, video_height, filename):
+    # 1. Font Setup
+    font_size = int(video_height * 0.15)
     try: font = ImageFont.truetype("arialbd.ttf", font_size)
     except:
         try: font = ImageFont.truetype("arial.ttf", font_size)
         except: font = ImageFont.load_default()
 
-    dummy_draw = ImageDraw.Draw(Image.new('RGB', (1, 1)))
+    dummy_img = Image.new('RGB', (1, 1))
+    draw = ImageDraw.Draw(dummy_img)
     
-    # Restore Spacing Logic
+    # 2. Sizing Loop (Shrink if too big)
+    max_allowed_width = video_width * 0.55
+    
     while True:
-        total_w = 0
         kerning = int(font_size * 0.06)
-        for char in text:
-            if char == " ":
-                cw = int(font_size * 0.25) 
-                total_w += cw
-            else:
-                bbox = dummy_draw.textbbox((0, 0), char, font=font)
-                total_w += (bbox[2] - bbox[0])
+        text_w = get_text_width_with_kerning(draw, text, font, kerning)
         
-        if len(text) > 1: total_w -= (len(text) - 1) * kerning
+        if text_w < max_allowed_width or font_size < 20:
+            break
         
-        if total_w < max_width or font_size < 20: break
         font_size = int(font_size * 0.9)
         try: font = ImageFont.truetype("arialbd.ttf", font_size)
-        except: pass
-    return font, font_size
+        except: font = ImageFont.truetype("arial.ttf", font_size)
+    
+    # 3. Final Dimensions
+    kerning = int(font_size * 0.06)
+    text_w = get_text_width_with_kerning(draw, text, font, kerning)
+    bbox = draw.textbbox((0, 0), text, font=font)
+    text_h = bbox[3] - bbox[1]
 
-def create_letter_image(char, font, filename):
-    dummy = ImageDraw.Draw(Image.new('RGB', (1, 1)))
-    bbox = dummy.textbbox((0, 0), char, font=font, anchor="ls")
-    char_w = bbox[2] - bbox[0]
+    # 4. Create Image
+    padding = 100
+    # Add extra height to accommodate rotation without clipping
+    txt_img = Image.new('RGBA', (text_w + padding, text_h + padding + 50), (255, 255, 255, 0))
+    txt_draw = ImageDraw.Draw(txt_img)
     
-    # Massive canvas for alignment
-    canvas_h = 600
-    canvas_base = 400
+    start_x = padding // 2
+    start_y = padding // 2
+    stroke_width = 5
+
+    # 5. Draw (Tight Kerning Logic)
+    # Pass 1: Outlines
+    current_x = start_x
+    for char in text:
+        c_bbox = txt_draw.textbbox((0, 0), char, font=font)
+        char_w = c_bbox[2] - c_bbox[0]
+        for x in range(-stroke_width, stroke_width+1):
+            for y in range(-stroke_width, stroke_width+1):
+                txt_draw.text((current_x+x, start_y+y), char, font=font, fill="black")
+        current_x += char_w - kerning
+
+    # Pass 2: Fill
+    current_x = start_x
+    for char in text:
+        c_bbox = txt_draw.textbbox((0, 0), char, font=font)
+        char_w = c_bbox[2] - c_bbox[0]
+        txt_draw.text((current_x, start_y), char, font=font, fill="white")
+        current_x += char_w - kerning
     
-    padding_x = 200
-    img_w = int(char_w + padding_x)
-    
-    img = Image.new('RGBA', (img_w, canvas_h), (255, 255, 255, 0))
-    d = ImageDraw.Draw(img)
-    draw_x = padding_x // 2
-    
-    # Draw Outline
-    for x in range(-3, 4):
-        for y in range(-3, 4): 
-            d.text((draw_x+x, canvas_base+y), char, font=font, fill="black", anchor="ls")
-    # Draw Fill
-    d.text((draw_x, canvas_base), char, font=font, fill="white", anchor="ls")
-    
-    # RESTORED: 7 Degree Tilt (High Quality)
-    img.rotate(7, expand=False, resample=Image.BICUBIC).save(filename)
-    return char_w
+    # 6. Rotate 3 Degrees (The angle you liked)
+    rotated_img = txt_img.rotate(3, expand=True, resample=Image.BICUBIC)
+    rotated_img.save(filename)
+    return filename
 
 # --- APP LOGIC ---
 st.set_page_config(page_title="Sign Manager", layout="wide", initial_sidebar_state="collapsed")
@@ -109,23 +129,33 @@ st.set_page_config(page_title="Sign Manager", layout="wide", initial_sidebar_sta
 query_params = st.query_params
 mode = query_params.get("mode", "display")
 
-# CSS: Black Background, Hidden Menus
+# === CSS: Fix Colors & Layout ===
 st.markdown("""
     <style>
     #MainMenu, footer, header, [data-testid="stToolbar"] {display: none !important;}
+    
+    /* Remove padding to fix scrollbar issues on stick */
     .block-container {
         padding: 0 !important;
         margin: 0 !important;
         max-width: 100% !important;
     }
     ::-webkit-scrollbar {display: none;}
+    
     body, .stApp {background-color: black;}
+    
+    /* Input Form Styling */
     p, label, h1, h2, h3 {color: white !important;}
-    .stTextInput input {color: black !important;}
+    
+    /* FORCE INPUT TEXT BLACK so you can read it */
+    .stTextInput input {
+        color: black !important;
+        background-color: white !important;
+    }
     </style>
 """, unsafe_allow_html=True)
 
-# === UPDATE MODE ===
+# === UPDATE MODE (Controller) ===
 if mode == "update":
     st.markdown("""<style>.block-container {padding: 2rem !important;}</style>""", unsafe_allow_html=True)
     
@@ -161,63 +191,45 @@ if mode == "update":
             clip = VideoFileClip(TEMPLATE_FILE)
             clip = safe_resize(clip, TARGET_RES)
             
-            # Sizing Logic
-            max_w = clip.w * 0.45 
-            start_size = int(clip.h * 0.11) 
-            font, font_size = get_font_and_metrics(full_text, max_w, start_size)
-            kerning = int(font_size * 0.06)
+            # Create ONE image for the name (Fixes jumbled letters)
+            temp_img = "temp_name_overlay.png"
+            create_text_image_file(full_text, clip.w, clip.h, temp_img)
             
-            dummy = ImageDraw.Draw(Image.new('RGB', (1,1)))
-            total_w = sum([int(font_size*0.25) if c==" " else (dummy.textbbox((0,0),c,font)[2]-dummy.textbbox((0,0),c,font)[0]) for c in full_text])
-            total_w -= (len(full_text)-1)*kerning
+            txt_clip = ImageClip(temp_img).with_duration(clip.duration)
             
-            # Position: Right side, aligned with Cake
-            center_x = clip.w * 0.65
-            curr_x = center_x - (total_w / 2)
+            # Position Logic
+            # Center of empty space is roughly 75% across screen
+            center_target = clip.w * 0.75
+            # We want to center the IMAGE on that point
+            # But since ImageClip doesn't expose .w easily before render in some versions,
+            # we rely on the visual calculation:
             
-            # Vertical Position (75% down - adjusted for canvas offset)
-            target_y = (clip.h * 0.75) - 400
+            # Animation
+            start_time = 2.0
+            slide_duration = 1.5
             
-            clips = [clip]
-            temp_imgs = []
+            # Load image to get width for math
+            with Image.open(temp_img) as img_ref:
+                img_w, img_h = img_ref.size
+                
+            target_x = center_target - (img_w / 2)
+            target_y = (clip.h * 0.65) - (img_h / 2)
+            start_x = clip.w + 10
             
-            prog.progress(20)
-            
-            # RESTORED: Staggered Skating Animation
-            for i, char in enumerate(full_text):
-                if char == " ":
-                    curr_x += int(font_size*0.25) - kerning
-                    continue
-                fname = f"t_{i}.png"
-                temp_imgs.append(fname)
-                
-                # Create Tilted Image
-                create_letter_image(char, font, fname)
-                
-                lc = ImageClip(fname).with_duration(clip.duration)
-                try: lc = lc.with_effects([FadeOut(1.0)]) if FadeOut else lc.fadeout(1.0)
-                except: pass
-                
-                # Staggered Start Time
-                st_t = 2.0 + (i*0.1)
-                
-                # Visual X (Compensate for padding)
-                visual_x = curr_x - 100 
-                
-                # Slide In Animation
-                def pos(t):
-                    start_x = clip.w - 1
-                    if t < 1.0: 
-                        p = 1 - ((1 - t)**3)
-                        current = start_x - ((start_x - visual_x) * p)
-                        return (int(current), int(target_y))
-                    return (int(visual_x), int(target_y))
-                
-                clips.append(lc.with_start(st_t).with_position(pos))
-                curr_x += (dummy.textbbox((0,0),char,font)[2]-dummy.textbbox((0,0),char,font)[0]) - kerning
+            def slide_position(t):
+                if t < 0: return (int(start_x), int(target_y))
+                if t < slide_duration:
+                    ratio = t / slide_duration
+                    progress = 1 - ((1 - ratio) ** 3)
+                    curr_x = start_x - ((start_x - target_x) * progress)
+                    return (int(curr_x), int(target_y))
+                return (int(target_x), int(target_y))
 
-            final = CompositeVideoClip(clips)
+            txt_clip = txt_clip.with_start(start_time).with_position(slide_position)
             
+            final = CompositeVideoClip([clip, txt_clip])
+
+            # Ad Logic
             ad = get_ad_file()
             if ad:
                 try:
@@ -234,8 +246,8 @@ if mode == "update":
             gc.collect()
             
             shutil.move(temp_out, os.path.join(OUTPUT_FOLDER, TARGET_FILE))
-            for f in temp_imgs: 
-                if os.path.exists(f): os.remove(f)
+            
+            if os.path.exists(temp_img): os.remove(temp_img)
             
             prog.progress(100)
             st.session_state.status = "done"
@@ -250,7 +262,6 @@ if mode == "update":
     elif st.session_state.status == "done":
         st.balloons()
         st.success(f"Success! Your Greeting for **{st.session_state.name_input}** is playing on the Screen.")
-        
         st.write("") 
         if st.button("Create New Greeting"):
             st.session_state.status = "idle"
@@ -262,14 +273,13 @@ else:
     real_target = os.path.join(OUTPUT_FOLDER, TARGET_FILE)
     
     if os.path.exists(real_target):
-        # 1. Read File stats
-        current_stats = os.stat(real_target).st_mtime
-        
-        # 2. Encode Video
         video_bytes = open(real_target, 'rb').read()
         video_b64 = base64.b64encode(video_bytes).decode()
         
-        # 3. HTML5 Player with FORCE RELOAD logic
+        # HTML5 PLAYER:
+        # object-fit: contain (Fixes Squashed Image)
+        # width: 100vw, height: 100vh (Fixes Scroll bars)
+        # margin: 0 (Fixes White edges)
         html_code = f"""
         <html>
         <head>
@@ -279,39 +289,41 @@ else:
                 margin: 0; padding: 0; 
                 overflow: hidden; 
                 width: 100vw; height: 100vh;
-                cursor: none;
+            }}
+            .video-container {{
+                position: absolute; top: 0; left: 0;
+                width: 100vw; height: 100vh;
+                display: flex; align-items: center; justify-content: center;
+                background-color: black;
             }}
             video {{
-                position: absolute;
-                top: 0; left: 0;
-                width: 100%;
-                height: 100%;
-                object-fit: contain; /* Prevents Stretching */
+                width: 100%; height: 100%;
+                object-fit: contain;
+                pointer-events: none;
             }}
         </style>
         </head>
         <body>
-            <video autoplay loop muted playsinline id="vplayer">
-                <source src="data:video/mp4;base64,{video_b64}" type="video/mp4">
-            </video>
+            <div class="video-container">
+                <video autoplay loop muted playsinline>
+                    <source src="data:video/mp4;base64,{video_b64}" type="video/mp4">
+                </video>
+            </div>
             <script>
-                // Brute force reload every 10 seconds to catch updates
+                // HARD RELOAD every 5 seconds to catch updates
                 setTimeout(function(){{
                     window.location.reload(true);
-                }}, 10000);
+                }}, 5000);
             </script>
         </body>
         </html>
         """
         
-        # Key=Timestamp forces Streamlit to re-mount the component if file changed
-        st.components.v1.html(html_code, height=1200, scrolling=False)
-        
-        # Python-side polling as backup
+        current_stats = os.stat(real_target).st_mtime
         if "last_version" not in st.session_state:
             st.session_state.last_version = current_stats
             
-        time.sleep(5)
+        st.components.v1.html(html_code, height=1080, scrolling=False)
         
         if current_stats > st.session_state.last_version:
             st.session_state.last_version = current_stats
