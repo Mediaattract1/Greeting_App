@@ -47,44 +47,43 @@ def get_ad_file():
         if os.path.exists("ad" + ext): return "ad" + ext
     return None
 
-def create_full_name_image(text, video_w, video_h, filename):
-    # 1. Setup Font
-    # Font size = 12% of screen height
-    font_size = int(video_h * 0.12) 
-    
+def get_font_and_metrics(text, max_width, start_size):
+    font_size = start_size
     try: font = ImageFont.truetype("arialbd.ttf", font_size)
     except:
         try: font = ImageFont.truetype("arial.ttf", font_size)
         except: font = ImageFont.load_default()
 
-    # 2. Measure Text
+    dummy_draw = ImageDraw.Draw(Image.new('RGB', (1, 1)))
+    while True:
+        total_w = 0
+        kerning = 0 
+        for char in text:
+            cw = int(font_size * 0.25) if char == " " else (dummy_draw.textbbox((0, 0), char, font)[2] - dummy_draw.textbbox((0, 0), char, font)[0])
+            total_w += cw
+        if total_w < max_width or font_size < 20: break
+        font_size = int(font_size * 0.9)
+        try: font = ImageFont.truetype("arialbd.ttf", font_size)
+        except: pass
+    return font, font_size
+
+def create_letter_image(char, font, filename):
     dummy = ImageDraw.Draw(Image.new('RGB', (1, 1)))
-    bbox = dummy.textbbox((0, 0), text, font=font)
-    text_w = bbox[2] - bbox[0]
-    text_h = bbox[3] - bbox[1]
+    bbox = dummy.textbbox((0, 0), char, font=font, anchor="ls")
+    char_w = bbox[2] - bbox[0]
     
-    # 3. Create Canvas
-    # Add padding so outlines don't get cut off
-    pad = 50
-    img = Image.new('RGBA', (text_w + pad*2, text_h + pad*2), (255, 255, 255, 0))
-    draw = ImageDraw.Draw(img)
+    canvas_h = 600
+    canvas_base = 400
     
-    # 4. Draw Text (Centered in canvas)
-    x = pad
-    y = pad
-    stroke = 4
+    img = Image.new('RGBA', (int(char_w + 200), canvas_h), (255, 255, 255, 0))
+    d = ImageDraw.Draw(img)
+    for x in range(-3, 4):
+        for y in range(-3, 4): 
+            d.text((100+x, canvas_base+y), char, font=font, fill="black", anchor="ls")
+    d.text((100, canvas_base), char, font=font, fill="white", anchor="ls")
     
-    # Black Outline
-    for i in range(-stroke, stroke+1):
-        for j in range(-stroke, stroke+1):
-            draw.text((x+i, y+j), text, font=font, fill="black")
-            
-    # White Fill
-    draw.text((x, y), text, font=font, fill="white")
-    
-    # Save
-    img.save(filename)
-    return img.width, img.height
+    img.rotate(0, expand=False, resample=Image.BICUBIC).save(filename)
+    return char_w
 
 # --- APP LOGIC ---
 st.set_page_config(page_title="Sign Manager", layout="wide", initial_sidebar_state="collapsed")
@@ -96,11 +95,7 @@ mode = query_params.get("mode", "display")
 st.markdown("""
     <style>
     #MainMenu, footer, header, [data-testid="stToolbar"] {display: none !important;}
-    .block-container {
-        padding: 0 !important;
-        margin: 0 !important;
-        max-width: 100% !important;
-    }
+    .block-container {padding: 0 !important; margin: 0 !important; max-width: 100% !important;}
     ::-webkit-scrollbar {display: none;}
     body, .stApp {background-color: black;}
     p, label, h1, h2, h3 {color: white !important;}
@@ -134,7 +129,6 @@ if mode == "update":
             full_text = st.session_state.name_input + "!"
             TARGET_FILE = "video.mp4"
             temp_out = "temp_render.mp4"
-            temp_img = "temp_text_overlay.png"
             
             gc.collect()
 
@@ -142,50 +136,42 @@ if mode == "update":
                 st.error(f"Missing {TEMPLATE_FILE}")
                 st.stop()
 
-            # 1. Load Background
             clip = VideoFileClip(TEMPLATE_FILE)
             clip = safe_resize(clip, TARGET_RES)
             
-            # 2. Create ONE Text Image (Fixes Broadcasting Error)
-            img_w, img_h = create_full_name_image(full_text, clip.w, clip.h, temp_img)
+            font, font_size = get_font_and_metrics(full_text, clip.w * 0.45, int(clip.h * 0.11))
+            kerning = 0
             
-            prog.progress(30)
+            dummy = ImageDraw.Draw(Image.new('RGB', (1,1)))
+            total_w = sum([int(font_size*0.25) if c==" " else (dummy.textbbox((0,0),c,font)[2]-dummy.textbbox((0,0),c,font)[0]) for c in full_text])
             
-            # 3. Create Overlay Clip
-            txt_clip = ImageClip(temp_img).with_duration(clip.duration)
+            curr_x = (clip.w * 0.65) - (total_w / 2)
+            target_y = (clip.h * 0.75) - 400
             
-            # 4. Position Logic (Align with Cake)
-            # Target X: Centered in the right-side empty space (approx 70% across screen)
-            center_point_x = clip.w * 0.70
-            target_x = center_point_x - (img_w / 2)
+            clips = [clip]
+            temp_imgs = []
             
-            # Target Y: Aligned with cake (75% down)
-            target_y = (clip.h * 0.75) - (img_h / 2)
+            prog.progress(20)
             
-            # 5. Slide Animation
-            start_time = 2.0
-            slide_dur = 1.0
-            
-            def slide_pos(t):
-                if t < slide_dur:
-                    # Ease out math
-                    p = 1 - ((1 - t) ** 3)
-                    # Start off screen (clip.w) -> Slide to target_x
-                    curr_x = clip.w - ((clip.w - target_x) * p)
-                    return (int(curr_x), int(target_y))
-                return (int(target_x), int(target_y))
-            
-            txt_clip = txt_clip.with_start(start_time).with_position(slide_pos)
-            
-            # Fade Out Text at end
-            try:
-                if FadeOut: txt_clip = txt_clip.with_effects([FadeOut(1.0)])
-                else: txt_clip = txt_clip.fadeout(1.0)
-            except: pass
+            for i, char in enumerate(full_text):
+                if char == " ":
+                    curr_x += int(font_size*0.25)
+                    continue
+                fname = f"t_{i}.png"
+                temp_imgs.append(fname)
+                w = create_letter_image(char, font, fname)
+                lc = ImageClip(fname).with_duration(clip.duration)
+                try: lc = lc.with_effects([FadeOut(1.0)]) if FadeOut else lc.fadeout(1.0)
+                except: pass
+                st_t = 2.0 + (i*0.1)
+                tx = curr_x - 100
+                def pos(t):
+                    if t < 1.0: return (int(clip.w - ((clip.w-tx)*(1-((1-t)**3)))), int(target_y))
+                    return (int(tx), int(target_y))
+                clips.append(lc.with_start(st_t).with_position(pos))
+                curr_x += w 
 
-            final = CompositeVideoClip([clip, txt_clip])
-
-            # 6. Ad Logic
+            final = CompositeVideoClip(clips)
             ad = get_ad_file()
             if ad:
                 try:
@@ -195,17 +181,15 @@ if mode == "update":
                 except: pass
             
             prog.progress(60)
-            
-            # 7. Write File
             final.write_videofile(temp_out, codec='libx264', audio_codec='aac', fps=24, logger=None)
             
-            # Cleanup
             clip.close()
             final.close()
             gc.collect()
             
             shutil.move(temp_out, os.path.join(OUTPUT_FOLDER, TARGET_FILE))
-            if os.path.exists(temp_img): os.remove(temp_img)
+            for f in temp_imgs: 
+                if os.path.exists(f): os.remove(f)
             
             prog.progress(100)
             st.session_state.status = "done"
@@ -234,37 +218,36 @@ else:
         video_bytes = open(real_target, 'rb').read()
         video_b64 = base64.b64encode(video_bytes).decode()
         
-        # HTML5 PLAYER (Fit to Screen)
+        # --- FIX IS HERE: Added 'viewport' meta tag to force scale 1.0 ---
         html_code = f"""
+        <!DOCTYPE html>
         <html>
         <head>
-        <style>
-            body, html {{ 
-                background-color: black; 
-                margin: 0; padding: 0; 
-                overflow: hidden; 
-                width: 100vw; height: 100vh;
-                cursor: none;
-            }}
-            .video-container {{
-                position: absolute; top: 0; left: 0;
-                width: 100vw; height: 100vh;
-                display: flex; align-items: center; justify-content: center;
-                background-color: black;
-            }}
-            video {{
-                width: 100%; height: 100%;
-                object-fit: contain;
-                pointer-events: none;
-            }}
-        </style>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+            <style>
+                body {{ 
+                    background-color: black; 
+                    margin: 0; 
+                    padding: 0;
+                    width: 100vw; 
+                    height: 100vh;
+                    overflow: hidden;
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                }}
+                video {{
+                    max-width: 100%;
+                    max-height: 100%;
+                    width: auto;
+                    height: auto;
+                }}
+            </style>
         </head>
         <body>
-            <div class="video-container">
-                <video autoplay loop muted playsinline>
-                    <source src="data:video/mp4;base64,{video_b64}" type="video/mp4">
-                </video>
-            </div>
+            <video autoplay loop muted playsinline>
+                <source src="data:video/mp4;base64,{video_b64}" type="video/mp4">
+            </video>
             <script>
                 setTimeout(function(){{
                     window.location.reload(true);
@@ -278,7 +261,7 @@ else:
         if "last_version" not in st.session_state:
             st.session_state.last_version = current_stats
             
-        st.components.v1.html(html_code, height=1200, scrolling=False)
+        st.components.v1.html(html_code, height=1080, scrolling=False)
         
         if current_stats > st.session_state.last_version:
             st.session_state.last_version = current_stats
