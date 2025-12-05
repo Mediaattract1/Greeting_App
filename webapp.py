@@ -72,17 +72,14 @@ def create_letter_image(char, font, filename):
     dummy = ImageDraw.Draw(Image.new('RGB', (1, 1)))
     bbox = dummy.textbbox((0, 0), char, font=font, anchor="ls")
     char_w = bbox[2] - bbox[0]
-    
     canvas_h = 600
     canvas_base = 400
-    
     img = Image.new('RGBA', (int(char_w + 200), canvas_h), (255, 255, 255, 0))
     d = ImageDraw.Draw(img)
     for x in range(-3, 4):
         for y in range(-3, 4): 
             d.text((100+x, canvas_base+y), char, font=font, fill="black", anchor="ls")
     d.text((100, canvas_base), char, font=font, fill="white", anchor="ls")
-    
     img.rotate(0, expand=False, resample=Image.BICUBIC).save(filename)
     return char_w
 
@@ -92,54 +89,66 @@ st.set_page_config(page_title="Sign Manager", layout="wide", initial_sidebar_sta
 query_params = st.query_params
 mode = query_params.get("mode", "display")
 
-# === CSS: HIDE MENUS & BRIGHTEN TEXT ===
-# This fixes the "Grey Text" issue by forcing labels to be white
-hide_streamlit_style = """
+# === CSS: FORCE FULL SCREEN & HIDE SCROLLBARS ===
+st.markdown("""
     <style>
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    header {visibility: hidden;}
-    [data-testid="stToolbar"] {visibility: hidden;}
-    [data-testid="stDecoration"] {display: none;}
-    [data-testid="stStatusWidget"] {display: none;}
+    /* Hide Streamlit UI elements */
+    #MainMenu, footer, header, [data-testid="stToolbar"], [data-testid="stDecoration"], [data-testid="stStatusWidget"] {display: none !important;}
     
-    /* Force Background Black */
-    .stApp {background-color: black;}
-    
-    /* Force Text White */
-    p, label, h1, h2, h3 {color: white !important;}
-    
-    /* Center the Form */
+    /* Remove padding/margins to prevent scrolling */
     .block-container {
-        padding-top: 2rem;
+        padding: 0 !important;
+        margin: 0 !important;
+        max-width: 100% !important;
     }
+    
+    /* Hide Scrollbars */
+    ::-webkit-scrollbar {display: none;}
+    
+    /* Backgrounds */
+    body, .stApp {background-color: black;}
+    
+    /* Text styling for inputs */
+    p, label, h1, h2, h3 {color: white !important;}
     </style>
-"""
-st.markdown(hide_streamlit_style, unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 
-# === UPDATE MODE (The Controller) ===
+# === UPDATE MODE (Controller) ===
 if mode == "update":
+    # Add a little padding just for the controller so it looks nice
+    st.markdown("""<style>.block-container {padding: 2rem !important;}</style>""", unsafe_allow_html=True)
+    
     st.title("Create Greeting")
     
-    with st.form("update_form"):
-        name_input = st.text_input("Enter Name:", max_chars=20).strip()
-        # Button says "Create"
-        submit = st.form_submit_button("Create", type="primary")
-    
-    if submit and name_input:
-        status = st.empty()
+    if "status" not in st.session_state:
+        st.session_state.status = "idle"
+
+    # Form
+    if st.session_state.status == "idle":
+        with st.form("update_form"):
+            name_input = st.text_input("Enter Name:", max_chars=20).strip()
+            submit = st.form_submit_button("Create", type="primary")
+        
+        if submit and name_input:
+            st.session_state.status = "processing"
+            st.session_state.name_input = name_input
+            st.rerun()
+
+    # Processing State
+    elif st.session_state.status == "processing":
+        status_box = st.empty()
+        status_box.info("Processing... (Please wait)")
         prog = st.progress(0)
-        status.info("Processing... (Please wait)")
         
         try:
-            full_text = name_input + "!"
+            full_text = st.session_state.name_input + "!"
             TARGET_FILE = "video.mp4"
             temp_out = "temp_render.mp4"
             
             gc.collect()
 
             if not os.path.exists(TEMPLATE_FILE):
-                st.error(f"Missing {TEMPLATE_FILE}. Please upload the 1080p file to GitHub.")
+                st.error(f"Missing {TEMPLATE_FILE}")
                 st.stop()
 
             clip = VideoFileClip(TEMPLATE_FILE)
@@ -158,6 +167,8 @@ if mode == "update":
             clips = [clip]
             temp_imgs = []
             
+            prog.progress(20)
+            
             for i, char in enumerate(full_text):
                 if char == " ":
                     curr_x += int(font_size*0.25) - kerning
@@ -165,22 +176,18 @@ if mode == "update":
                 fname = f"t_{i}.png"
                 temp_imgs.append(fname)
                 w = create_letter_image(char, font, fname)
-                
                 lc = ImageClip(fname).with_duration(clip.duration)
                 try: lc = lc.with_effects([FadeOut(1.0)]) if FadeOut else lc.fadeout(1.0)
                 except: pass
-                
                 st_t = 2.0 + (i*0.1)
                 tx = curr_x - 100
                 def pos(t):
                     if t < 1.0: return (int(clip.w - ((clip.w-tx)*(1-((1-t)**3)))), int(target_y))
                     return (int(tx), int(target_y))
-                
                 clips.append(lc.with_start(st_t).with_position(pos))
                 curr_x += w - kerning
 
             final = CompositeVideoClip(clips)
-            
             ad = get_ad_file()
             if ad:
                 try:
@@ -189,30 +196,33 @@ if mode == "update":
                     final = CompositeVideoClip([final, ac])
                 except: pass
             
-            prog.progress(50)
-            
-            final.write_videofile(
-                temp_out, 
-                codec='libx264', 
-                audio_codec='aac', 
-                fps=24, 
-                logger=None
-            )
+            prog.progress(60)
+            final.write_videofile(temp_out, codec='libx264', audio_codec='aac', fps=24, logger=None)
             
             clip.close()
             final.close()
             gc.collect()
             
             shutil.move(temp_out, os.path.join(OUTPUT_FOLDER, TARGET_FILE))
-            
             for f in temp_imgs: 
                 if os.path.exists(f): os.remove(f)
             
             prog.progress(100)
-            status.success("Completed")
+            st.session_state.status = "done"
+            st.rerun()
             
         except Exception as e:
-            status.error(f"Error: {e}")
+            st.error(f"Error: {e}")
+            if st.button("Try Again"):
+                st.session_state.status = "idle"
+                st.rerun()
+
+    # Done State
+    elif st.session_state.status == "done":
+        st.success("Completed! The TV is updating.")
+        if st.button("Make Another"):
+            st.session_state.status = "idle"
+            st.rerun()
 
 # === DISPLAY MODE (The Kiosk Player) ===
 else:
@@ -220,64 +230,70 @@ else:
     real_target = os.path.join(OUTPUT_FOLDER, TARGET_FILE)
     
     if os.path.exists(real_target):
+        # Read file into memory for instant HTML5 playback
         video_bytes = open(real_target, 'rb').read()
         video_b64 = base64.b64encode(video_bytes).decode()
         
-        # HTML PLAYER FIX:
-        # object-fit: contain -> Ensures entire video fits (adds black bars if ratio mismatch)
-        # width/height: 100% -> Ensures player uses full window
+        # TIMESTAMP CACHE BUSTER
+        # We append the current time to the ID to force the browser to reload the element
+        timestamp = int(time.time())
+        
         html_code = f"""
+        <html>
+        <head>
         <style>
-        body {{ 
-            background-color: black; 
-            margin: 0; 
-            padding: 0;
-            overflow: hidden; 
-            cursor: none; 
-        }}
-        .video-container {{
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100vw;
-            height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            background-color: black;
-        }}
-        video {{
-            width: 100%;
-            height: 100%;
-            object-fit: contain; 
-            pointer-events: none;
-        }}
+            body, html {{ 
+                background-color: black; 
+                margin: 0; padding: 0; 
+                overflow: hidden; /* NO SCROLLBARS */
+                width: 100vw; height: 100vh;
+                cursor: none;
+            }}
+            .video-wrap {{
+                position: absolute;
+                top: 0; left: 0;
+                width: 100vw; height: 100vh;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }}
+            video {{
+                width: 100%;
+                height: 100%;
+                object-fit: contain; /* Ensure it fits without cutting off */
+            }}
         </style>
-        
-        <div class="video-container">
-            <video autoplay loop muted playsinline>
-                <source src="data:video/mp4;base64,{video_b64}" type="video/mp4">
-            </video>
-        </div>
-        
-        <script>
-        setTimeout(function(){{
-            location.reload();
-        }}, 15000);
-        </script>
+        </head>
+        <body>
+            <div class="video-wrap">
+                <video autoplay loop muted playsinline id="vplayer">
+                    <source src="data:video/mp4;base64,{video_b64}" type="video/mp4">
+                </video>
+            </div>
+            <script>
+                // RELOAD EVERY 5 SECONDS TO CHECK FOR UPDATES
+                setTimeout(function(){{
+                    location.reload();
+                }}, 5000);
+            </script>
+        </body>
+        </html>
         """
         
+        # Detect file change
         current_stats = os.stat(real_target).st_mtime
         if "last_version" not in st.session_state:
             st.session_state.last_version = current_stats
             
-        st.components.v1.html(html_code, height=1080, scrolling=False)
+        # Render HTML - Height set slightly higher than 100vh to push iframe borders off screen
+        st.components.v1.html(html_code, height=1100, scrolling=False)
         
         if current_stats > st.session_state.last_version:
             st.session_state.last_version = current_stats
             st.rerun()
             
     else:
+        # Waiting Screen
         st.info("Waiting for first update...")
-        time.sleep(5)
+        time.sleep(3)
         st.rerun()
