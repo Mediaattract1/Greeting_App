@@ -57,11 +57,12 @@ def get_font_and_metrics(text, max_width, start_size):
     dummy_draw = ImageDraw.Draw(Image.new('RGB', (1, 1)))
     while True:
         total_w = 0
-        kerning = int(font_size * 0.06)
+        # FIX: Reduced kerning to 0 to stop letters from squishing together
+        kerning = 0 
         for char in text:
             cw = int(font_size * 0.25) if char == " " else (dummy_draw.textbbox((0, 0), char, font)[2] - dummy_draw.textbbox((0, 0), char, font)[0])
             total_w += cw
-        if len(text) > 1: total_w -= (len(text) - 1) * kerning
+        
         if total_w < max_width or font_size < 20: break
         font_size = int(font_size * 0.9)
         try: font = ImageFont.truetype("arialbd.ttf", font_size)
@@ -72,14 +73,17 @@ def create_letter_image(char, font, filename):
     dummy = ImageDraw.Draw(Image.new('RGB', (1, 1)))
     bbox = dummy.textbbox((0, 0), char, font=font, anchor="ls")
     char_w = bbox[2] - bbox[0]
+    
     canvas_h = 600
     canvas_base = 400
+    
     img = Image.new('RGBA', (int(char_w + 200), canvas_h), (255, 255, 255, 0))
     d = ImageDraw.Draw(img)
     for x in range(-3, 4):
         for y in range(-3, 4): 
             d.text((100+x, canvas_base+y), char, font=font, fill="black", anchor="ls")
     d.text((100, canvas_base), char, font=font, fill="white", anchor="ls")
+    
     img.rotate(0, expand=False, resample=Image.BICUBIC).save(filename)
     return char_w
 
@@ -149,11 +153,12 @@ if mode == "update":
             clip = safe_resize(clip, TARGET_RES)
             
             font, font_size = get_font_and_metrics(full_text, clip.w * 0.45, int(clip.h * 0.11))
-            kerning = int(font_size * 0.06)
+            
+            # FIX: Kerning removed to stop squishing
+            kerning = 0 
             
             dummy = ImageDraw.Draw(Image.new('RGB', (1,1)))
             total_w = sum([int(font_size*0.25) if c==" " else (dummy.textbbox((0,0),c,font)[2]-dummy.textbbox((0,0),c,font)[0]) for c in full_text])
-            total_w -= (len(full_text)-1)*kerning
             
             curr_x = (clip.w * 0.65) - (total_w / 2)
             target_y = (clip.h * 0.75) - 400
@@ -165,7 +170,7 @@ if mode == "update":
             
             for i, char in enumerate(full_text):
                 if char == " ":
-                    curr_x += int(font_size*0.25) - kerning
+                    curr_x += int(font_size*0.25)
                     continue
                 fname = f"t_{i}.png"
                 temp_imgs.append(fname)
@@ -179,7 +184,7 @@ if mode == "update":
                     if t < 1.0: return (int(clip.w - ((clip.w-tx)*(1-((1-t)**3)))), int(target_y))
                     return (int(tx), int(target_y))
                 clips.append(lc.with_start(st_t).with_position(pos))
-                curr_x += w - kerning
+                curr_x += w 
 
             final = CompositeVideoClip(clips)
             ad = get_ad_file()
@@ -211,12 +216,13 @@ if mode == "update":
                 st.session_state.status = "idle"
                 st.rerun()
 
-    # 3. DONE STATE
+    # 3. DONE STATE (Updated Message)
     elif st.session_state.status == "done":
         st.balloons()
-        st.success(f"Success! Greeting for '{st.session_state.name_input}' is playing on the TV.")
+        # FIX: Updated success message
+        st.success(f"Success! Your Greeting for **{st.session_state.name_input}** is playing on the Screen.")
         
-        st.write("") # Spacer
+        st.write("") 
         if st.button("Create New Greeting"):
             st.session_state.status = "idle"
             st.rerun()
@@ -230,7 +236,7 @@ else:
         video_bytes = open(real_target, 'rb').read()
         video_b64 = base64.b64encode(video_bytes).decode()
         
-        # HTML PLAYER: Force 100% Size + Fill
+        # HTML PLAYER FIX: Changed 'fill' to 'contain' to stop stretching/flattening
         html_code = f"""
         <html>
         <head>
@@ -247,7 +253,7 @@ else:
                 top: 0; left: 0;
                 width: 100%;
                 height: 100%;
-                object-fit: fill; /* Forces 1920x1080 to fill screen exactly */
+                object-fit: contain; /* Ensures perfect aspect ratio (no squash/stretch) */
             }}
         </style>
         </head>
@@ -268,7 +274,6 @@ else:
         if "last_version" not in st.session_state:
             st.session_state.last_version = current_stats
             
-        # Increased iframe height to ensure no scrollbars appear
         st.components.v1.html(html_code, height=1200, scrolling=False)
         
         if current_stats > st.session_state.last_version:
