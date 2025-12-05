@@ -89,42 +89,37 @@ st.set_page_config(page_title="Sign Manager", layout="wide", initial_sidebar_sta
 query_params = st.query_params
 mode = query_params.get("mode", "display")
 
-# === CSS: FORCE FULL SCREEN & HIDE SCROLLBARS ===
+# === CSS: FULL SCREEN BLACK & HIDE UI ===
 st.markdown("""
     <style>
-    /* Hide Streamlit UI elements */
-    #MainMenu, footer, header, [data-testid="stToolbar"], [data-testid="stDecoration"], [data-testid="stStatusWidget"] {display: none !important;}
-    
-    /* Remove padding/margins to prevent scrolling */
+    #MainMenu, footer, header, [data-testid="stToolbar"] {display: none !important;}
     .block-container {
         padding: 0 !important;
         margin: 0 !important;
         max-width: 100% !important;
     }
-    
-    /* Hide Scrollbars */
     ::-webkit-scrollbar {display: none;}
-    
-    /* Backgrounds */
     body, .stApp {background-color: black;}
-    
-    /* Text styling for inputs */
     p, label, h1, h2, h3 {color: white !important;}
+    
+    /* Styling for the Controller inputs */
+    .stTextInput input {
+        color: black !important;
+    }
     </style>
 """, unsafe_allow_html=True)
 
 # === UPDATE MODE (Controller) ===
 if mode == "update":
-    # Add a little padding just for the controller so it looks nice
+    # Add padding back for the controller view
     st.markdown("""<style>.block-container {padding: 2rem !important;}</style>""", unsafe_allow_html=True)
-    
-    st.title("Create Greeting")
     
     if "status" not in st.session_state:
         st.session_state.status = "idle"
 
-    # Form
+    # 1. INPUT FORM
     if st.session_state.status == "idle":
+        st.title("Create Greeting")
         with st.form("update_form"):
             name_input = st.text_input("Enter Name:", max_chars=20).strip()
             submit = st.form_submit_button("Create", type="primary")
@@ -134,10 +129,9 @@ if mode == "update":
             st.session_state.name_input = name_input
             st.rerun()
 
-    # Processing State
+    # 2. PROCESSING STATE
     elif st.session_state.status == "processing":
-        status_box = st.empty()
-        status_box.info("Processing... (Please wait)")
+        st.info("Creating Video... Please wait.")
         prog = st.progress(0)
         
         try:
@@ -217,10 +211,13 @@ if mode == "update":
                 st.session_state.status = "idle"
                 st.rerun()
 
-    # Done State
+    # 3. DONE STATE
     elif st.session_state.status == "done":
-        st.success("Completed! The TV is updating.")
-        if st.button("Make Another"):
+        st.balloons()
+        st.success(f"Success! Greeting for '{st.session_state.name_input}' is playing on the TV.")
+        
+        st.write("") # Spacer
+        if st.button("Create New Greeting"):
             st.session_state.status = "idle"
             st.rerun()
 
@@ -230,14 +227,10 @@ else:
     real_target = os.path.join(OUTPUT_FOLDER, TARGET_FILE)
     
     if os.path.exists(real_target):
-        # Read file into memory for instant HTML5 playback
         video_bytes = open(real_target, 'rb').read()
         video_b64 = base64.b64encode(video_bytes).decode()
         
-        # TIMESTAMP CACHE BUSTER
-        # We append the current time to the ID to force the browser to reload the element
-        timestamp = int(time.time())
-        
+        # HTML PLAYER: Force 100% Size + Fill
         html_code = f"""
         <html>
         <head>
@@ -245,33 +238,24 @@ else:
             body, html {{ 
                 background-color: black; 
                 margin: 0; padding: 0; 
-                overflow: hidden; /* NO SCROLLBARS */
+                overflow: hidden; 
                 width: 100vw; height: 100vh;
                 cursor: none;
             }}
-            .video-wrap {{
+            video {{
                 position: absolute;
                 top: 0; left: 0;
-                width: 100vw; height: 100vh;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-            }}
-            video {{
                 width: 100%;
                 height: 100%;
-                object-fit: contain; /* Ensure it fits without cutting off */
+                object-fit: fill; /* Forces 1920x1080 to fill screen exactly */
             }}
         </style>
         </head>
         <body>
-            <div class="video-wrap">
-                <video autoplay loop muted playsinline id="vplayer">
-                    <source src="data:video/mp4;base64,{video_b64}" type="video/mp4">
-                </video>
-            </div>
+            <video autoplay loop muted playsinline id="vplayer">
+                <source src="data:video/mp4;base64,{video_b64}" type="video/mp4">
+            </video>
             <script>
-                // RELOAD EVERY 5 SECONDS TO CHECK FOR UPDATES
                 setTimeout(function(){{
                     location.reload();
                 }}, 5000);
@@ -280,20 +264,18 @@ else:
         </html>
         """
         
-        # Detect file change
         current_stats = os.stat(real_target).st_mtime
         if "last_version" not in st.session_state:
             st.session_state.last_version = current_stats
             
-        # Render HTML - Height set slightly higher than 100vh to push iframe borders off screen
-        st.components.v1.html(html_code, height=1100, scrolling=False)
+        # Increased iframe height to ensure no scrollbars appear
+        st.components.v1.html(html_code, height=1200, scrolling=False)
         
         if current_stats > st.session_state.last_version:
             st.session_state.last_version = current_stats
             st.rerun()
             
     else:
-        # Waiting Screen
         st.info("Waiting for first update...")
         time.sleep(3)
         st.rerun()
