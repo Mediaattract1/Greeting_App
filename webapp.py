@@ -41,7 +41,7 @@ def create_name_animation(name: str, output_path: str):
     fontsize = _compute_fontsize(name)
     font = _load_font(fontsize)
 
-    # 🔒 Locked-in safe defaults (no UI dials)
+    # 🔒 Locked-in safe defaults
     letter_interval = 0.12
     hold_time = 1.6
     fade_time = 0.5
@@ -55,7 +55,8 @@ def create_name_animation(name: str, output_path: str):
     writer = imageio.get_writer(
         output_path,
         fps=FPS,
-        codec="libx264"
+        codec="libx264",
+        format="ffmpeg"   # ✅ Explicit backend fix
     )
 
     for i in range(total_frames):
@@ -88,7 +89,7 @@ def create_name_animation(name: str, output_path: str):
 
 
 # ===========================
-# STREAMLIT ROUTER (UPDATED ✅)
+# STREAMLIT ROUTER
 # ===========================
 query = st.query_params
 mode = query.get("mode", "player").lower()
@@ -106,9 +107,8 @@ if mode == "update":
             st.error("Please enter a name.")
         else:
             with st.spinner("Creating new greeting..."):
-                temp_path = STATIC_VIDEO_PATH + ".tmp"
-                create_name_animation(name, temp_path)
-                os.replace(temp_path, STATIC_VIDEO_PATH)
+                # ✅ WRITE DIRECTLY TO MP4 (NO .tmp)
+                create_name_animation(name, STATIC_VIDEO_PATH)
 
             st.success("Greeting Updated!")
             st.video(STATIC_VIDEO_PATH)
@@ -130,7 +130,7 @@ else:
     )
 
     st.markdown(
-        f"""
+        """
         <video autoplay muted loop>
             <source src="/static/current.mp4" type="video/mp4">
         </video>
