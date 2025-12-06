@@ -2,8 +2,8 @@ import os
 import time
 
 import numpy as np
+import imageio
 from PIL import Image, ImageDraw, ImageFont
-from moviepy.editor import VideoFileClip, VideoClip
 import streamlit as st
 
 # ===========================
@@ -13,10 +13,8 @@ VIDEO_WIDTH = 1920
 VIDEO_HEIGHT = 1080
 FPS_DEFAULT = 30
 
-# Template (silent for now, that's fine)
 BASE_VIDEO_PATH = "template_HB1_wide.mp4"  # must be in repo root
 
-# Output used by the players (served from /static/)
 STATIC_FOLDER = "static"
 STATIC_VIDEO_PATH = os.path.join(STATIC_FOLDER, "current.mp4")
 STATIC_VERSION_PATH = os.path.join(STATIC_FOLDER, "current.version")
@@ -47,9 +45,8 @@ def _load_font(size: int) -> ImageFont.FreeTypeFont:
 
 
 # ===========================
-# VIDEO GENERATOR (MoviePy)
-# - Uses template_HB1_wide.mp4 frames
-# - No music required (template has no audio, that's OK)
+# VIDEO GENERATOR (imageio)
+# - Reads template_HB1_wide.mp4 frame by frame
 # - Name:
 #     * Smart caps (ALL CAPS preserved, else Title Case)
 #     * Types in from the RIGHT, one letter at a time
@@ -57,7 +54,7 @@ def _load_font(size: int) -> ImageFont.FreeTypeFont:
 #     * Ends lower on the screen, in the right-side area
 # ===========================
 def create_name_animation(name: str, output_path: str, version_path: str) -> None:
-    # --- Smart capitalization ---
+    # Smart capitalization
     raw_name = (name or "").strip() or "Friend"
     if raw_name.isupper():
         name = raw_name
@@ -67,11 +64,11 @@ def create_name_animation(name: str, output_path: str, version_path: str) -> Non
     if not os.path.exists(BASE_VIDEO_PATH):
         raise FileNotFoundError(f"Template video not found: {BASE_VIDEO_PATH}")
 
-    base_clip = VideoFileClip(BASE_VIDEO_PATH)
-    duration = base_clip.duration
-    fps = base_clip.fps or FPS_DEFAULT
+    reader = imageio.get_reader(BASE_VIDEO_PATH, format="ffmpeg")
+    meta = reader.get_meta_data()
+    fps = meta.get("fps", FPS_DEFAULT)
 
-    # --- Font & full text metrics ---
+    # Font & full text metrics
     fontsize = _compute_fontsize(name)
     font = _load_font(fontsize)
 
@@ -86,61 +83,57 @@ def create_name_animation(name: str, output_path: str, version_path: str) -> Non
     band_center_y = int(VIDEO_HEIGHT * 0.70)
     y_final = band_center_y - full_h // 2
 
-    # Horizontal: center in the right-side area (between cake & right edge)
+    # Horizontal: we define a "name box" centered in the right-side area
     target_center_x = int(VIDEO_WIDTH * 0.72)
-    x_final = target_center_x - full_w // 2
+    box_final_left = target_center_x - full_w // 2
 
-    # Start completely off-screen to the right
-    x_start = VIDEO_WIDTH + full_w
+    # Start with the entire box off-screen to the right
+    box_start_left = VIDEO_WIDTH + full_w
 
     # --- Timing ---
     letter_interval = 0.12  # seconds per letter
-    slide_duration = min(1.5, duration)  # seconds for slide-in
+    slide_duration = 1.5    # seconds for slide-in
 
     total_letters = len(name)
 
-    def make_frame(t: float) -> np.ndarray:
-        # Base frame from template
-        frame = base_clip.get_frame(t)
-        frame_img = Image.fromarray(frame).convert("RGB")
-        frame_img = frame_img.resize((VIDEO_WIDTH, VIDEO_HEIGHT))
+    writer = imageio.get_writer(
+        output_path,
+        fps=fps,
+        codec="libx264",
+        format="ffmpeg",
+    )
 
-        draw = ImageDraw.Draw(frame_img)
+    frame_index = 0
+    for frame in reader:
+        t = frame_index / fps
 
         # Typewriter: number of letters visible at time t
         letters_visible = max(1, min(total_letters, int(t / letter_interval) + 1))
         visible_text = name[:letters_visible]
 
-        # Smooth slide progress 0..1
+        # Smooth slide progress 0..1 over slide_duration
         p = min(1.0, t / slide_duration) if slide_duration > 0 else 1.0
 
-        # Current x between off-screen right and final position (no jitter)
-        x_current = int(x_start + (x_final - x_start) * p)
-        y_current = y_final
+        # Current left of the "name box" (anchored; no jitter)
+        box_left = int(box_start_left + (box_final_left - box_start_left) * p)
+        x = box_left
+        y = y_final
 
-        draw.text((x_current, y_current), visible_text, font=font, fill=(255, 255, 255))
+        # Base frame → PIL → resize to 1920x1080
+        pil_frame = Image.fromarray(frame).convert("RGB")
+        if pil_frame.size != (VIDEO_WIDTH, VIDEO_HEIGHT):
+            pil_frame = pil_frame.resize((VIDEO_WIDTH, VIDEO_HEIGHT))
 
-        return np.array(frame_img)
+        draw = ImageDraw.Draw(pil_frame)
+        draw.text((x, y), visible_text, font=font, fill=(255, 255, 255))
 
-    animated_clip = VideoClip(make_frame, duration=duration)
+        writer.append_data(np.array(pil_frame))
+        frame_index += 1
 
-    # No audio for now (template is silent); this is safe even if template has no audio
-    if base_clip.audio is not None:
-        animated_clip = animated_clip.set_audio(base_clip.audio)
+    reader.close()
+    writer.close()
 
-    # Write final MP4
-    animated_clip.write_videofile(
-        output_path,
-        fps=fps,
-        codec="libx264",
-        audio_codec="aac" if base_clip.audio is not None else None,
-        logger=None,  # keep logs quiet
-    )
-
-    base_clip.close()
-    animated_clip.close()
-
-    # Update version file for heartbeat/auto-update
+    # Update version file (for the player heartbeat)
     with open(version_path, "w") as vf:
         vf.write(str(time.time()))
 
@@ -157,7 +150,7 @@ else:
 
 
 # ===========================
-# UPDATE MODE (name entry)
+# UPDATE MODE (phone / web)
 # ===========================
 if mode == "update":
     st.title("Birthday Greeting Update")
@@ -170,7 +163,11 @@ if mode == "update":
         else:
             try:
                 with st.spinner("Rendering birthday video..."):
-                    create_name_animation(name, STATIC_VIDEO_PATH, STATIC_VERSION_PATH)
+                    create_name_animation(
+                        name,
+                        STATIC_VIDEO_PATH,
+                        STATIC_VERSION_PATH,
+                    )
                 st.success("Greeting updated. Screens will switch automatically.")
             except Exception as e:
                 st.error(str(e))
@@ -199,7 +196,7 @@ else:
           object-fit: contain;
           background-color: black;
         }}
-        /* Hide default controls where possible */
+        /* Hide controls where possible */
         video::-webkit-media-controls {{
           display: none !important;
         }}
@@ -231,7 +228,7 @@ else:
             }}
             lastVersion = text;
           }} catch (e) {{
-            // ignore network errors, try again later
+            // ignore errors; try again on next heartbeat
           }}
         }}
 
