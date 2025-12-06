@@ -210,7 +210,7 @@ if mode == "update":
             st.session_state.status = "idle"
             st.rerun()
 
-# === DISPLAY MODE ===
+# === DISPLAY MODE (WITH FADE + AUTO-REFRESH MAIN PAGE) ===
 else:
     TARGET_FILE = "video.mp4"
     real_target = os.path.join(OUTPUT_FOLDER, TARGET_FILE)
@@ -219,7 +219,6 @@ else:
         video_bytes = open(real_target, 'rb').read()
         video_b64 = base64.b64encode(video_bytes).decode()
 
-        # HTML5 PLAYER: FULLSCREEN + NO CROPPING (object-fit: contain)
         html_code = f"""
         <!DOCTYPE html>
         <html>
@@ -233,6 +232,11 @@ else:
                 height: 100vh;
                 background-color: black;
                 overflow: hidden;
+                transition: opacity 0.9s ease-in-out;
+            }}
+
+            body.fade-out {{
+                opacity: 0;
             }}
 
             .video-wrapper {{
@@ -252,7 +256,7 @@ else:
             }}
         </style>
         </head>
-        <body>
+        <body id="body">
             <div class="video-wrapper">
                 <video autoplay loop muted playsinline>
                     <source src="data:video/mp4;base64,{video_b64}" type="video/mp4">
@@ -261,7 +265,12 @@ else:
 
             <script>
                 setTimeout(function() {{
-                    window.location.reload(true);
+                    document.body.classList.add("fade-out");
+
+                    setTimeout(function() {{
+                        // Reload the TOP-LEVEL page (like manual refresh)
+                        window.parent.location.reload(true);
+                    }}, 900);
                 }}, 5000);
             </script>
         </body>
@@ -272,7 +281,6 @@ else:
         if "last_version" not in st.session_state:
             st.session_state.last_version = current_stats
 
-        # Let the browser/TV scale the page; 600 is enough for the iframe height
         st.components.v1.html(html_code, height=600, scrolling=False)
 
         if current_stats > st.session_state.last_version:
