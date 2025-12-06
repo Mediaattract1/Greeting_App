@@ -46,8 +46,8 @@ def _load_font(size: int):
 # - Name:
 #     * Smart caps (ALL CAPS respected, else Title Case)
 #     * Types in from the RIGHT, one letter at a time
-#     * Ends up LOWER on the screen (cake height)
-#     * Centered in the RIGHT HALF between cake and right edge
+#     * Slides in from off-screen right
+#     * Ends LOWER on the screen, centered in the right side area
 # ===========================
 def create_name_animation(name: str, output_path: str):
     # Smart capitalization
@@ -82,55 +82,58 @@ def create_name_animation(name: str, output_path: str):
     full_w = full_bbox[2] - full_bbox[0]
     full_h = full_bbox[3] - full_bbox[1]
 
-    # -------- POSITIONING LOGIC --------
-    # Vertical: lower, closer to cake height (around 70% down)
-    cake_band_center_y = int(VIDEO_HEIGHT * 0.70)
-    y = cake_band_center_y - full_h // 2
+    # -------- POSITIONING --------
+    # Vertical: lower, roughly where the cake text band would be
+    # tweakable: 0.70 = 70% down the screen
+    band_center_y = int(VIDEO_HEIGHT * 0.70)
+    base_y = band_center_y - full_h // 2
 
-    # Horizontal: assume cake occupies roughly LEFT 55% of the screen.
-    # We center the name in the RIGHT HALF between cake edge and screen edge.
-    cake_right_x = int(VIDEO_WIDTH * 0.55)
-    right_edge_x = int(VIDEO_WIDTH * 0.98)
-    target_center_x = (cake_right_x + right_edge_x) // 2
+    # Horizontal: center in the right-side area
+    # assume cake occupies ~left 55% of the screen
+    # we center the name around ~72% of the width
+    target_center_x = int(VIDEO_WIDTH * 0.72)
 
-    # Sliding from off-screen right
-    slide_seconds = 1.5
-    slide_frames = max(int(slide_seconds * fps), 1)
+    # -------- ANIMATION TIMING --------
+    # typewriter: how many frames per letter
+    letter_interval_sec = 0.12
+    frames_per_letter = max(int(letter_interval_sec * fps), 1)
 
-    # Typewriter timing
-    letter_interval = 0.12  # seconds per letter
+    # slide: we tie slide progress to how many letters are visible
+    total_letters = len(name)
+    total_steps = total_letters  # one step per new letter
+
+    # start center way off to the right, enough to hide full text
+    start_center_x = VIDEO_WIDTH + full_w
 
     frame_index = 0
     for frame in reader:
-        t = frame_index / fps
-
-        # Typewriter: letters visible based on time
-        letters_visible = min(len(name), max(1, int(t / letter_interval) + 1))
+        # how many letters should be visible at this frame?
+        step_index = frame_index // frames_per_letter
+        letters_visible = min(total_letters, step_index + 1)
         visible_text = name[:letters_visible]
 
-        # Slide progress 0..1 over slide_seconds
-        if t < slide_seconds:
-            progress_slide = t / slide_seconds
-        else:
-            progress_slide = 1.0
+        # slide progress is based on letters revealed (0..1)
+        progress = letters_visible / float(total_letters)
 
-        # Base frame → PIL → resize to 1920x1080 to fill as much as possible
+        # current center X based on progress
+        current_center_x = int(
+            start_center_x + (target_center_x - start_center_x) * progress
+        )
+
+        # Base frame → PIL → resize to 1920x1080
         pil_frame = Image.fromarray(frame).convert("RGB")
         if pil_frame.size != (VIDEO_WIDTH, VIDEO_HEIGHT):
             pil_frame = pil_frame.resize((VIDEO_WIDTH, VIDEO_HEIGHT))
 
         draw = ImageDraw.Draw(pil_frame)
 
-        # Width of current substring
+        # measure current substring to center it on current_center_x
         sub_bbox = d.textbbox((0, 0), visible_text, font=font)
         sub_w = sub_bbox[2] - sub_bbox[0]
+        sub_h = sub_bbox[3] - sub_bbox[1]
 
-        # Slide center from off-screen right to target_center_x
-        start_center_x = VIDEO_WIDTH + sub_w // 2
-        current_center_x = int(
-            start_center_x + (target_center_x - start_center_x) * progress_slide
-        )
         x = current_center_x - sub_w // 2
+        y = base_y  # vertical stays locked
 
         draw.text((x, y), visible_text, font=font, fill=(255, 255, 255))
 
@@ -175,7 +178,7 @@ if mode == "update":
 # PLAYER MODE (Stick / browser viewer)
 # ===========================
 else:
-    # Try to visually maximize the video area
+    # Try to visually maximize the video area inside Streamlit
     st.markdown(
         """
         <style>
@@ -197,6 +200,7 @@ else:
     if not os.path.exists(OUTPUT_PATH):
         st.write("Waiting for first greeting video...")
     else:
-        # For the stick: it will load this URL and play this video.
-        # For browsers: some may require you to hit "play" once, depending on autoplay policy.
+        # In desktop Chrome, you may still have to click Play once
+        # (autoplay policy). On the stick in kiosk mode, this
+        # typically auto-plays as soon as the page loads.
         st.video(OUTPUT_PATH)
