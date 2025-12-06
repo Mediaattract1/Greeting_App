@@ -17,26 +17,54 @@ TARGET_RES = (1920, 1080)
 # --- SAFE SETUP ---
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
-# --- MOVIEPY IMPORT FIXER (MODULAR, NO moviepy.editor) ---
+# --- MOVIEPY IMPORT FIXER (MODULAR IMPORTS, NO moviepy.editor) ---
 try:
     from moviepy.video.io.VideoFileClip import VideoFileClip
     from moviepy.video.compositing.CompositeVideoClip import CompositeVideoClip
     from moviepy.video.VideoClip import ImageClip
-    try:
-        from moviepy.video.fx.all import fadeout as moviepy_fadeout
+    from moviepy.video.fx import all as vfx
 
-        def apply_fadeout(clip, duration):
+    moviepy_fadeout = vfx.fadeout
+    moviepy_fadein = vfx.fadein
+    crop = vfx.crop
+
+    def apply_fadeout(clip, duration):
+        try:
             return moviepy_fadeout(clip, duration)
-    except Exception:
-        # If fadeout effect is missing, just return the clip unchanged
-        def apply_fadeout(clip, duration):
+        except Exception:
+            return clip
+
+    def apply_fadein(clip, duration):
+        try:
+            return moviepy_fadein(clip, duration)
+        except Exception:
+            return clip
+
+    def apply_typewriter(clip, duration):
+        """
+        Reveal the text from left to right over `duration` seconds.
+        Uses a horizontal crop that grows with time (typewriter-like).
+        """
+        w, h = clip.size
+
+        if duration <= 0:
+            return clip
+
+        def x2_func(t):
+            # t is local to this clip (after set_start); 0..duration
+            progress = max(0.0, min(1.0, t / duration))
+            return int(w * progress)
+
+        try:
+            return crop(clip, x1=0, y1=0, x2=x2_func, y2=h)
+        except Exception:
+            # If crop fx is unavailable, just return the original clip
             return clip
 
 except ImportError as e:
-    # Hard fail with a clear message if MoviePy is not installed at all
     raise RuntimeError(
-        "MoviePy is required but not installed. "
-        "Add 'moviepy', 'imageio', and 'imageio-ffmpeg' to your requirements.txt."
+        "MoviePy is required but not installed correctly. "
+        "Make sure 'moviepy', 'imageio', and 'imageio-ffmpeg' are in requirements.txt."
     ) from e
 
 
@@ -55,42 +83,76 @@ def get_ad_file():
     return None
 
 
-def create_full_name_image(text, video_h, filename):
-    font_size = int(video_h * 0.12)
-    try:
-        font = ImageFont.truetype("arialbd.ttf", font_size)
-    except:
-        try:
-            font = ImageFont.truetype("arial.ttf", font_size)
-        except:
-            font = ImageFont.load_default()
-
-    dummy = ImageDraw.Draw(Image.new('RGB', (1, 1)))
-    bbox = dummy.textbbox((0, 0), text, font=font)
+def measure_text_size(text, font):
+    dummy_img = Image.new('RGB', (1, 1))
+    dummy_draw = ImageDraw.Draw(dummy_img)
+    bbox = dummy_draw.textbbox((0, 0), text, font=font)
     text_w = bbox[2] - bbox[0]
     text_h = bbox[3] - bbox[1]
+    return text_w, text_h
+
+
+def create_full_name_image(text, video_w, video_h, filename, max_width_ratio=0.75):
+    """
+    Create a PNG with the name text, automatically adjusting font size
+    so that the text width <= max_width_ratio * video_w.
+
+    Returns (img_w, img_h).
+    """
+    max_text_width = int(video_w * max_width_ratio)
+
+    # Start with a relatively large font size proportional to height
+    base_font_size = int(video_h * 0.20)
+    font_size = base_font_size
+
+    # Try bold first, then regular, then default
+    def load_font(fs):
+        for fname in ["arialbd.ttf", "arial.ttf"]:
+            try:
+                return ImageFont.truetype(fname, fs)
+            except Exception:
+                continue
+        return ImageFont.load_default()
+
+    # Decrease font until text fits the desired width or font becomes too small
+    while font_size > 10:
+        font = load_font(font_size)
+        text_w, text_h = measure_text_size(text, font)
+        if text_w <= max_text_width:
+            break
+        font_size -= 2
+
+    # Use final font to render
+    font = load_font(font_size)
+    text_w, text_h = measure_text_size(text, font)
 
     pad = 50
-    img = Image.new('RGBA', (text_w + pad * 2, text_h + pad * 2), (255, 255, 255, 0))
+    img_w = text_w + pad * 2
+    img_h = text_h + pad * 2
+
+    img = Image.new('RGBA', (img_w, img_h), (255, 255, 255, 0))
     draw = ImageDraw.Draw(img)
 
     x = pad
     y = pad
     stroke = 4
+
+    # Outline
     for i in range(-stroke, stroke + 1):
         for j in range(-stroke, stroke + 1):
             draw.text((x + i, y + j), text, font=font, fill="black")
+
+    # Main text
     draw.text((x, y), text, font=font, fill="white")
 
     img.save(filename)
-    return img.width, img.height
+    return img_w, img_h
 
 
 # --- APP LOGIC ---
 st.set_page_config(page_title="Sign Manager", layout="wide", initial_sidebar_state="collapsed")
 
 query_params = st.query_params
-# Handle both list-style and direct values safely
 _raw_mode = query_params.get("mode", "display")
 if isinstance(_raw_mode, list):
     mode = _raw_mode[0] if _raw_mode else "display"
@@ -142,165 +204,13 @@ if mode == "update":
                 st.error(f"Missing {TEMPLATE_FILE}")
                 st.stop()
 
-            # Load template
+            # Load base template video
             clip = VideoFileClip(TEMPLATE_FILE)
-            img_w, img_h = create_full_name_image(full_text, clip.h, temp_img)
-            prog.progress(30)
+            prog.progress(10)
 
-            txt_clip = ImageClip(temp_img).with_duration(clip.duration)
+            # Create dynamic-sized name image based on name length and video width
+            img_w, img_h = create_full_name_image(full_text, clip.w, clip.h, temp_img)
+            prog.progress(25)
 
-            # Positioning logic
-            center_point_x = clip.w * 0.70
-            target_x = center_point_x - (img_w / 2)
-            target_y = (clip.h * 0.75) - (img_h / 2)
-
-            start_time = 2.0
-            slide_dur = 1.0
-
-            def slide_pos(t):
-                if t < slide_dur:
-                    p = 1 - ((1 - t) ** 3)
-                    curr_x = clip.w - ((clip.w - target_x) * p)
-                    return (int(curr_x), int(target_y))
-                return (int(target_x), int(target_y))
-
-            txt_clip = txt_clip.with_start(start_time).with_position(slide_pos)
-
-            # Fade out text near the end
-            try:
-                txt_clip = apply_fadeout(txt_clip, 1.0)
-            except Exception:
-                # If something goes wrong, just keep the text as-is
-                pass
-
-            final = CompositeVideoClip([clip, txt_clip])
-
-            # Optional ad file at the end
-            ad = get_ad_file()
-            if ad:
-                try:
-                    if ad.lower().endswith(('.mp4', '.mov')):
-                        ac = VideoFileClip(ad)
-                    else:
-                        ac = ImageClip(ad).with_duration(15)
-
-                    try:
-                        ac = ac.resized(new_size=clip.size)
-                    except Exception:
-                        ac = ac.resize(newsize=clip.size)
-
-                    ac = ac.with_start(final.duration)
-                    final = CompositeVideoClip([final, ac])
-                except Exception:
-                    pass
-
-            prog.progress(60)
-            final.write_videofile(
-                temp_out,
-                codec='libx264',
-                audio_codec='aac',
-                fps=24,
-                logger=None
-            )
-
-            # Cleanup
-            clip.close()
-            final.close()
-            gc.collect()
-
-            shutil.move(temp_out, os.path.join(OUTPUT_FOLDER, TARGET_FILE))
-            if os.path.exists(temp_img):
-                os.remove(temp_img)
-
-            prog.progress(100)
-            st.session_state.status = "done"
-            st.rerun()
-
-        except Exception as e:
-            st.error(f"Error: {e}")
-            if st.button("Try Again"):
-                st.session_state.status = "idle"
-                st.rerun()
-
-    elif st.session_state.status == "done":
-        st.balloons()
-        st.success(f"Success! Your Greeting for **{st.session_state.name_input}** is playing on the Screen.")
-        st.write("")
-        if st.button("Create New Greeting"):
-            st.session_state.status = "idle"
-            st.rerun()
-
-# === DISPLAY MODE ===
-else:
-    TARGET_FILE = "video.mp4"
-    real_target = os.path.join(OUTPUT_FOLDER, TARGET_FILE)
-
-    if os.path.exists(real_target):
-        video_bytes = open(real_target, 'rb').read()
-        video_b64 = base64.b64encode(video_bytes).decode()
-
-        # HTML5 PLAYER: FULLSCREEN + NO CROPPING (object-fit: contain)
-        html_code = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-        <style>
-            html, body {{
-                margin: 0;
-                padding: 0;
-                width: 100vw;
-                height: 100vh;
-                background-color: black;
-                overflow: hidden;
-            }}
-
-            .video-wrapper {{
-                position: fixed;
-                inset: 0;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                background-color: black;
-            }}
-
-            video {{
-                width: 100vw;
-                height: 100vh;
-                object-fit: contain;      /* Full video visible, no cropping */
-                pointer-events: none;     /* No controls / clicks */
-            }}
-        </style>
-        </head>
-        <body>
-            <div class="video-wrapper">
-                <video autoplay loop muted playsinline>
-                    <source src="data:video/mp4;base64,{video_b64}" type="video/mp4">
-                </video>
-            </div>
-
-            <script>
-                // Periodic refresh so Fully Kiosk picks up new videos
-                setTimeout(function() {{
-                    window.location.reload(true);
-                }}, 5000);
-            </script>
-        </body>
-        </html>
-        """
-
-        current_stats = os.stat(real_target).st_mtime
-        if "last_version" not in st.session_state:
-            st.session_state.last_version = current_stats
-
-        # Let the browser/TV scale the page; a smaller iframe height avoids vertical clipping
-        st.components.v1.html(html_code, height=600, scrolling=False)
-
-        if current_stats > st.session_state.last_version:
-            st.session_state.last_version = current_stats
-            st.rerun()
-
-    else:
-        st.info("Waiting for first update...")
-        time.sleep(3)
-        st.rerun()
+            # Build text clip for entire duration
+            txt_clip = ImageClip(temp_i
