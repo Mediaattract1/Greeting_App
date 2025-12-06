@@ -210,7 +210,7 @@ if mode == "update":
             st.session_state.status = "idle"
             st.rerun()
 
-# === DISPLAY MODE (FADE OUT + FADE IN BETWEEN REPLAYS) ===
+# === DISPLAY MODE (FADE-IN BEFORE PLAY + FADE-OUT BETWEEN REPLAYS) ===
 else:
     TARGET_FILE = "video.mp4"
     real_target = os.path.join(OUTPUT_FOLDER, TARGET_FILE)
@@ -236,7 +236,7 @@ else:
 
             body {{
                 opacity: 0;
-                transition: opacity 0.9s ease-in-out;
+                transition: opacity 0.3s ease-in-out;
             }}
 
             body.fade-in {{
@@ -264,22 +264,30 @@ else:
             }}
         </style>
         </head>
-        <body id="body" class="fade-in">
+        <body id="body">
             <div class="video-wrapper">
-                <video autoplay loop muted playsinline>
+                <video id="hbVideo" autoplay loop muted playsinline>
                     <source src="data:video/mp4;base64,{video_b64}" type="video/mp4">
                 </video>
             </div>
 
             <script>
+                const video = document.getElementById("hbVideo");
+
+                // When the video is ready to play, do a tiny fade-in from black
+                video.addEventListener("canplay", function() {{
+                    document.body.classList.add("fade-in");
+                }});
+
                 // After 5 seconds, fade out, then reload the whole page
                 setTimeout(function() {{
+                    document.body.classList.remove("fade-in");
                     document.body.classList.add("fade-out");
 
                     setTimeout(function() {{
                         // Reload the TOP-LEVEL page (like manual refresh)
                         window.parent.location.reload(true);
-                    }}, 900);  // wait for fade-out to complete
+                    }}, 600);  // keep this slightly longer than fade-out if you like
                 }}, 5000);
             </script>
         </body>
