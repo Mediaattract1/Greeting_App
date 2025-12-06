@@ -47,40 +47,30 @@ def get_ad_file():
         if os.path.exists("ad" + ext): return "ad" + ext
     return None
 
-# --- TEXT ENGINE (Single Image - No Jumbling) ---
 def create_full_name_image(text, video_h, filename):
-    # Font size relative to video height (12%)
     font_size = int(video_h * 0.12) 
-    
     try: font = ImageFont.truetype("arialbd.ttf", font_size)
     except:
         try: font = ImageFont.truetype("arial.ttf", font_size)
         except: font = ImageFont.load_default()
 
-    # Measure Text
     dummy = ImageDraw.Draw(Image.new('RGB', (1, 1)))
     bbox = dummy.textbbox((0, 0), text, font=font)
     text_w = bbox[2] - bbox[0]
     text_h = bbox[3] - bbox[1]
     
-    # Create Canvas with padding
     pad = 50
     img = Image.new('RGBA', (text_w + pad*2, text_h + pad*2), (255, 255, 255, 0))
     draw = ImageDraw.Draw(img)
     
-    # Draw Text Centered
     x = pad
     y = pad
     stroke = 4
-    
-    # Outline
     for i in range(-stroke, stroke+1):
         for j in range(-stroke, stroke+1):
             draw.text((x+i, y+j), text, font=font, fill="black")
-    # Fill
     draw.text((x, y), text, font=font, fill="white")
     
-    # Save (No Rotation - Flat)
     img.save(filename)
     return img.width, img.height
 
@@ -90,7 +80,6 @@ st.set_page_config(page_title="Sign Manager", layout="wide", initial_sidebar_sta
 query_params = st.query_params
 mode = query_params.get("mode", "display")
 
-# CSS: Force Black Background & Inputs
 st.markdown("""
     <style>
     #MainMenu, footer, header, [data-testid="stToolbar"] {display: none !important;}
@@ -102,7 +91,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# === UPDATE MODE (Controller) ===
+# === UPDATE MODE ===
 if mode == "update":
     st.markdown("""<style>.block-container {padding: 2rem !important;}</style>""", unsafe_allow_html=True)
     
@@ -136,24 +125,19 @@ if mode == "update":
                 st.error(f"Missing {TEMPLATE_FILE}")
                 st.stop()
 
-            # 1. Load Background
             clip = VideoFileClip(TEMPLATE_FILE)
-            # We do NOT resize here because your file is already correct
+            # We trust the source file is already 1920x1080. No resizing.
             
-            # 2. Create Text Image
             img_w, img_h = create_full_name_image(full_text, clip.h, temp_img)
             
             prog.progress(30)
             
-            # 3. Create Overlay Clip
             txt_clip = ImageClip(temp_img).with_duration(clip.duration)
             
-            # 4. Position Logic
             center_point_x = clip.w * 0.70
             target_x = center_point_x - (img_w / 2)
             target_y = (clip.h * 0.75) - (img_h / 2)
             
-            # 5. Slide Animation
             start_time = 2.0
             slide_dur = 1.0
             
@@ -166,7 +150,6 @@ if mode == "update":
             
             txt_clip = txt_clip.with_start(start_time).with_position(slide_pos)
             
-            # Fade Out
             try:
                 if FadeOut: txt_clip = txt_clip.with_effects([FadeOut(1.0)])
                 else: txt_clip = txt_clip.fadeout(1.0)
@@ -174,7 +157,6 @@ if mode == "update":
 
             final = CompositeVideoClip([clip, txt_clip])
 
-            # 6. Ad Logic
             ad = get_ad_file()
             if ad:
                 try:
@@ -186,8 +168,6 @@ if mode == "update":
                 except: pass
             
             prog.progress(60)
-            
-            # 7. Write File
             final.write_videofile(temp_out, codec='libx264', audio_codec='aac', fps=24, logger=None)
             
             clip.close()
@@ -215,7 +195,7 @@ if mode == "update":
             st.session_state.status = "idle"
             st.rerun()
 
-# === DISPLAY MODE (The Kiosk Player) ===
+# === DISPLAY MODE ===
 else:
     TARGET_FILE = "video.mp4"
     real_target = os.path.join(OUTPUT_FOLDER, TARGET_FILE)
@@ -224,9 +204,8 @@ else:
         video_bytes = open(real_target, 'rb').read()
         video_b64 = base64.b64encode(video_bytes).decode()
         
-        # HTML5 PLAYER
-        # viewport: Prevents Zoom
-        # object-fit: fill -> Forces your video to stretch/squash to match screen exactly
+        # --- FIXED: OBJECT-FIT CONTAIN ---
+        # This prevents stretching vertically. It keeps the aspect ratio perfect.
         html_code = f"""
         <!DOCTYPE html>
         <html>
@@ -238,15 +217,20 @@ else:
                 margin: 0; padding: 0; 
                 width: 100vw; height: 100vh;
                 overflow: hidden;
+                display: flex;
+                justify-content: center;
+                align-items: center;
             }}
             .video-container {{
-                position: fixed; top: 0; left: 0;
+                position: absolute; top: 0; left: 0;
                 width: 100%; height: 100%;
                 display: flex; align-items: center; justify-content: center;
             }}
             video {{
-                width: 100%; height: 100%;
-                object-fit: fill; /* Forces exact fit to screen edges */
+                width: 100%; 
+                height: 100%;
+                object-fit: contain; /* Ensures NO stretching. Adds black bars if needed. */
+                pointer-events: none;
             }}
         </style>
         </head>
@@ -269,7 +253,7 @@ else:
         if "last_version" not in st.session_state:
             st.session_state.last_version = current_stats
             
-        st.components.v1.html(html_code, height=1200, scrolling=False)
+        st.components.v1.html(html_code, height=1080, scrolling=False)
         
         if current_stats > st.session_state.last_version:
             st.session_state.last_version = current_stats
