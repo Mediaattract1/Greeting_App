@@ -14,8 +14,9 @@ STATIC_VIDEO_PATH = "static/current.mp4"
 
 os.makedirs("static", exist_ok=True)
 
-# Set layout once, at top (no warnings)
+# Set layout once, at top
 st.set_page_config(layout="wide")
+
 
 # ===========================
 # FONT HELPERS
@@ -52,16 +53,23 @@ def create_name_animation(name: str, output_path: str):
     fontsize = _compute_fontsize(name)
     font = _load_font(fontsize)
 
-    # Locked defaults for timing
+    # Timing defaults
     letter_interval = 0.12   # seconds per letter
     hold_time = 1.6          # seconds holding full name
     fade_time = 0.5          # seconds fade in/out
 
-    type_time = len(name) * letter_interval
+    type_time = max(len(name) * letter_interval, letter_interval)
     total_time = type_time + hold_time
 
-    total_frames = int(total_time * FPS)
-    fade_frames = int(fade_time * FPS)
+    total_frames = max(int(total_time * FPS), 1)
+    fade_frames = min(int(fade_time * FPS), total_frames // 2)
+
+    # Precompute vertical centering using the FINAL full name
+    tmp_img = Image.new("RGB", (VIDEO_WIDTH, VIDEO_HEIGHT), (0, 0, 0))
+    tmp_draw = ImageDraw.Draw(tmp_img)
+    full_bbox = tmp_draw.textbbox((0, 0), name, font=font)
+    full_h = full_bbox[3] - full_bbox[1]
+    y_center = (VIDEO_HEIGHT - full_h) // 2
 
     writer = imageio.get_writer(
         output_path,
@@ -72,33 +80,33 @@ def create_name_animation(name: str, output_path: str):
 
     for i in range(total_frames):
         t = i / FPS
-        visible_letters = min(len(name), int(t / letter_interval) + 1)
+        visible_letters = min(len(name), max(1, int(t / letter_interval) + 1))
         text = name[:visible_letters]
 
         img = Image.new("RGB", (VIDEO_WIDTH, VIDEO_HEIGHT), (0, 0, 0))
         draw = ImageDraw.Draw(img)
 
+        # Horizontal centering (width changes as we type)
         if text:
             bbox = draw.textbbox((0, 0), text, font=font)
             w = bbox[2] - bbox[0]
-            h = bbox[3] - bbox[1]
         else:
-            w, h = 0, 0
+            w = 0
 
         x = (VIDEO_WIDTH - w) // 2
-        y = (VIDEO_HEIGHT - h) // 2
+        y = y_center
 
         draw.text((x, y), text, fill=(255, 255, 255), font=font)
 
         frame = np.array(img).astype(np.float32)
 
         # Fade In
-        if i < fade_frames:
-            frame *= i / max(fade_frames, 1)
+        if fade_frames > 0 and i < fade_frames:
+            frame *= i / float(fade_frames)
 
         # Fade Out
-        if i > total_frames - fade_frames:
-            frame *= max((total_frames - i) / max(fade_frames, 1), 0)
+        if fade_frames > 0 and i >= total_frames - fade_frames:
+            frame *= max((total_frames - 1 - i) / float(fade_frames), 0.0)
 
         writer.append_data(frame.astype(np.uint8))
 
@@ -108,8 +116,13 @@ def create_name_animation(name: str, output_path: str):
 # ===========================
 # STREAMLIT ROUTER
 # ===========================
-query = st.query_params
-mode = query.get("mode", "player").lower()
+params = st.query_params
+mode_val = params.get("mode", "player")
+# mode_val might be a list or a string depending on how Streamlit returns it
+if isinstance(mode_val, list):
+    mode = (mode_val[0] or "player").lower()
+else:
+    mode = (mode_val or "player").lower()
 
 
 # ===========================
@@ -127,7 +140,14 @@ if mode == "update":
                 create_name_animation(name, STATIC_VIDEO_PATH)
 
             st.success("Greeting Updated!")
-            st.video(STATIC_VIDEO_PATH)
+
+            # Read bytes for preview to avoid any caching oddities
+            try:
+                with open(STATIC_VIDEO_PATH, "rb") as f:
+                    video_bytes = f.read()
+                st.video(video_bytes)
+            except FileNotFoundError:
+                st.error("Video file not found after generation.")
 
 
 # ===========================
