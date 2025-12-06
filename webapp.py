@@ -41,7 +41,7 @@ def create_name_animation(name: str, output_path: str):
     fontsize = _compute_fontsize(name)
     font = _load_font(fontsize)
 
-    # 🔒 Locked-in safe defaults
+    # Locked defaults
     letter_interval = 0.12
     hold_time = 1.6
     fade_time = 0.5
@@ -56,7 +56,7 @@ def create_name_animation(name: str, output_path: str):
         output_path,
         fps=FPS,
         codec="libx264",
-        format="ffmpeg"   # ✅ Explicit backend fix
+        format="ffmpeg",
     )
 
     for i in range(total_frames):
@@ -67,7 +67,14 @@ def create_name_animation(name: str, output_path: str):
         img = Image.new("RGB", (VIDEO_WIDTH, VIDEO_HEIGHT), (0, 0, 0))
         draw = ImageDraw.Draw(img)
 
-        w, h = draw.textsize(text, font=font)
+        # Use textbbox instead of deprecated textsize
+        if text:
+            bbox = draw.textbbox((0, 0), text, font=font)
+            w = bbox[2] - bbox[0]
+            h = bbox[3] - bbox[1]
+        else:
+            w, h = 0, 0
+
         x = (VIDEO_WIDTH - w) // 2
         y = (VIDEO_HEIGHT - h) // 2
 
@@ -77,11 +84,11 @@ def create_name_animation(name: str, output_path: str):
 
         # Fade In
         if i < fade_frames:
-            frame *= i / fade_frames
+            frame *= i / max(fade_frames, 1)
 
         # Fade Out
         if i > total_frames - fade_frames:
-            frame *= max((total_frames - i) / fade_frames, 0)
+            frame *= max((total_frames - i) / max(fade_frames, 1), 0)
 
         writer.append_data(frame.astype(np.uint8))
 
@@ -107,7 +114,6 @@ if mode == "update":
             st.error("Please enter a name.")
         else:
             with st.spinner("Creating new greeting..."):
-                # ✅ WRITE DIRECTLY TO MP4 (NO .tmp)
                 create_name_animation(name, STATIC_VIDEO_PATH)
 
             st.success("Greeting Updated!")
@@ -126,7 +132,7 @@ else:
         video { width: 100vw; height: 100vh; object-fit: contain; }
         </style>
         """,
-        unsafe_allow_html=True
+        unsafe_allow_html=True,
     )
 
     st.markdown(
@@ -135,5 +141,5 @@ else:
             <source src="/static/current.mp4" type="video/mp4">
         </video>
         """,
-        unsafe_allow_html=True
+        unsafe_allow_html=True,
     )
