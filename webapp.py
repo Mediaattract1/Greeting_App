@@ -1,5 +1,4 @@
 import os
-import tempfile
 import numpy as np
 import imageio
 from PIL import Image, ImageDraw, ImageFont
@@ -28,7 +27,7 @@ def _load_font(size: int):
     for f in ["DejaVuSans-Bold.ttf", "DejaVuSans.ttf", "Arial.ttf"]:
         try:
             return ImageFont.truetype(f, size)
-        except:
+        except Exception:
             continue
     return ImageFont.load_default()
 
@@ -42,6 +41,7 @@ def create_name_animation(name: str, output_path: str):
     fontsize = _compute_fontsize(name)
     font = _load_font(fontsize)
 
+    # 🔒 Locked-in safe defaults (no UI dials)
     letter_interval = 0.12
     hold_time = 1.6
     fade_time = 0.5
@@ -88,10 +88,10 @@ def create_name_animation(name: str, output_path: str):
 
 
 # ===========================
-# STREAMLIT ROUTER
+# STREAMLIT ROUTER (UPDATED ✅)
 # ===========================
-query = st.experimental_get_query_params()
-mode = query.get("mode", ["player"])[0].lower()
+query = st.query_params
+mode = query.get("mode", "player").lower()
 
 
 # ===========================
