@@ -10,10 +10,12 @@ import streamlit as st
 VIDEO_WIDTH = 1920
 VIDEO_HEIGHT = 1080
 FPS_DEFAULT = 30
-STATIC_VIDEO_PATH = "static/current.mp4"
-BASE_VIDEO_PATH = "assets/birthday_base.mp4"  # <-- put your cake video here
 
-os.makedirs("static", exist_ok=True)
+BASE_VIDEO_PATH = "template_HB1_wide.mp4"  # your birthday template in root
+OUTPUT_FOLDER = "generated_videos"
+OUTPUT_PATH = os.path.join(OUTPUT_FOLDER, "video.mp4")
+
+os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
 st.set_page_config(layout="wide")
 
@@ -38,8 +40,8 @@ def _load_font(size: int):
 
 # ===========================
 # VIDEO GENERATOR
-# Background: existing birthday cake video
-# Text: slides in from left to center, then stays.
+# Uses template_HB1_wide.mp4 as background,
+# draws the name sliding in from the left and then staying centered.
 # ===========================
 def create_name_animation(name: str, output_path: str):
     # Smart capitalization: ALL CAPS stays, otherwise Title Case
@@ -49,9 +51,8 @@ def create_name_animation(name: str, output_path: str):
     else:
         name = raw_name.title()
 
-    # Open base birthday video
     if not os.path.exists(BASE_VIDEO_PATH):
-        raise FileNotFoundError(f"Base video not found at {BASE_VIDEO_PATH}")
+        raise FileNotFoundError(f"Base video not found: {BASE_VIDEO_PATH}")
 
     reader = imageio.get_reader(BASE_VIDEO_PATH, format="ffmpeg")
     meta = reader.get_meta_data()
@@ -64,50 +65,44 @@ def create_name_animation(name: str, output_path: str):
         format="ffmpeg",
     )
 
-    # Prepare font and measure full text once
+    # Prepare font and measure full text
     fontsize = _compute_fontsize(name)
     font = _load_font(fontsize)
 
-    # We’ll need text size for centering and slide calculation
-    dummy_img = np.zeros((VIDEO_HEIGHT, VIDEO_WIDTH, 3), dtype=np.uint8)
-    pil_dummy = Image.fromarray(dummy_img)
-    draw_dummy = ImageDraw.Draw(pil_dummy)
-    bbox = draw_dummy.textbbox((0, 0), name, font=font)
+    dummy = np.zeros((VIDEO_HEIGHT, VIDEO_WIDTH, 3), dtype=np.uint8)
+    pimg = Image.fromarray(dummy)
+    d = ImageDraw.Draw(pimg)
+    bbox = d.textbbox((0, 0), name, font=font)
     text_w = bbox[2] - bbox[0]
     text_h = bbox[3] - bbox[1]
 
-    # Vertical center stays fixed
+    # Vertical center
     y = (VIDEO_HEIGHT - text_h) // 2
 
-    # Sliding: over the first ~1.5 seconds, we move from off-screen left to center
+    # Slide in over first 1.5s
     slide_seconds = 1.5
     slide_frames = int(slide_seconds * fps)
 
-    # Final centered x position
     x_center = (VIDEO_WIDTH - text_w) // 2
-    # Start completely off-screen left
-    x_start = -text_w
+    x_start = -text_w  # fully off-screen to the left
 
-    # Process each frame of the base video
     for i, frame in enumerate(reader):
-        frame_h, frame_w = frame.shape[0], frame.shape[1]
-
-        # Ensure frame is 1920x1080 by resizing if needed
         pil_frame = Image.fromarray(frame).convert("RGB")
-        if (frame_w, frame_h) != (VIDEO_WIDTH, VIDEO_HEIGHT):
+
+        # Ensure 1920x1080
+        if pil_frame.size != (VIDEO_WIDTH, VIDEO_HEIGHT):
             pil_frame = pil_frame.resize((VIDEO_WIDTH, VIDEO_HEIGHT))
 
         draw = ImageDraw.Draw(pil_frame)
 
-        # Compute horizontal position based on frame index
+        # Compute x position
         if i < slide_frames:
-            # Progress from 0.0 to 1.0
             progress = i / max(slide_frames - 1, 1)
             x = int(x_start + (x_center - x_start) * progress)
         else:
             x = x_center
 
-        # Draw the text over the frame
+        # Draw text
         draw.text((x, y), name, font=font, fill=(255, 255, 255))
 
         writer.append_data(np.array(pil_frame))
@@ -128,8 +123,7 @@ else:
 
 
 # ===========================
-# UPDATE MODE (Name Entry ONLY)
-# No test video, just regenerate the birthday MP4.
+# UPDATE MODE: just generate the video, no preview
 # ===========================
 if mode == "update":
     st.title("Birthday Greeting Update")
@@ -141,33 +135,28 @@ if mode == "update":
         else:
             try:
                 with st.spinner("Creating birthday greeting..."):
-                    create_name_animation(name, STATIC_VIDEO_PATH)
-                st.success("Greeting updated. The display should pick it up.")
-            except FileNotFoundError as e:
+                    create_name_animation(name, OUTPUT_PATH)
+                st.success("Greeting updated on the display.")
+            except Exception as e:
                 st.error(str(e))
 
 
 # ===========================
-# PLAYER MODE (Android Stick)
-# Just shows the current.mp4 full screen.
-# Your stick / remote logic is responsible for reloading when needed.
+# PLAYER MODE: used by the Stick
+# Always loads generated_videos/video.mp4
 # ===========================
 else:
     st.markdown(
         """
         <style>
         body { background-color: black; margin: 0; }
-        video { width: 100vw; height: 100vh; object-fit: contain; }
         </style>
         """,
         unsafe_allow_html=True,
     )
 
-    st.markdown(
-        """
-        <video autoplay muted loop>
-            <source src="/static/current.mp4" type="video/mp4">
-        </video>
-        """,
-        unsafe_allow_html=True,
-    )
+    if not os.path.exists(OUTPUT_PATH):
+        st.write("Waiting for first greeting video...")
+    else:
+        # This is what the stick sees: the current video, always.
+        st.video(OUTPUT_PATH)
