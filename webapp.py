@@ -126,10 +126,7 @@ if mode == "update":
                 st.stop()
 
             clip = VideoFileClip(TEMPLATE_FILE)
-            # We trust the source file is already 1920x1080. No resizing.
-            
             img_w, img_h = create_full_name_image(full_text, clip.h, temp_img)
-            
             prog.progress(30)
             
             txt_clip = ImageClip(temp_img).with_duration(clip.duration)
@@ -161,6 +158,7 @@ if mode == "update":
             if ad:
                 try:
                     ac = VideoFileClip(ad) if ad.endswith(('.mp4','.mov')) else ImageClip(ad).with_duration(15)
+                    # Resize Ad logic
                     try: ac = ac.resized(new_size=clip.size)
                     except: ac = ac.resize(newsize=clip.size)
                     ac = ac.with_start(final.duration)
@@ -204,8 +202,10 @@ else:
         video_bytes = open(real_target, 'rb').read()
         video_b64 = base64.b64encode(video_bytes).decode()
         
-        # --- FIXED: OBJECT-FIT CONTAIN ---
-        # This prevents stretching vertically. It keeps the aspect ratio perfect.
+        # HTML5 PLAYER: FLOAT CENTER FIX
+        # width/height: auto (Uses video's real size)
+        # max-width/height: 100% (Ensures it never exceeds screen)
+        # transform: translate (Centers it perfectly)
         html_code = f"""
         <!DOCTYPE html>
         <html>
@@ -217,29 +217,25 @@ else:
                 margin: 0; padding: 0; 
                 width: 100vw; height: 100vh;
                 overflow: hidden;
-                display: flex;
-                justify-content: center;
-                align-items: center;
-            }}
-            .video-container {{
-                position: absolute; top: 0; left: 0;
-                width: 100%; height: 100%;
-                display: flex; align-items: center; justify-content: center;
+                position: relative;
             }}
             video {{
-                width: 100%; 
-                height: 100%;
-                object-fit: contain; /* Ensures NO stretching. Adds black bars if needed. */
+                position: absolute;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                width: auto;
+                height: auto;
+                max-width: 100%;
+                max-height: 100%;
                 pointer-events: none;
             }}
         </style>
         </head>
         <body>
-            <div class="video-container">
-                <video autoplay loop muted playsinline>
-                    <source src="data:video/mp4;base64,{video_b64}" type="video/mp4">
-                </video>
-            </div>
+            <video autoplay loop muted playsinline>
+                <source src="data:video/mp4;base64,{video_b64}" type="video/mp4">
+            </video>
             <script>
                 setTimeout(function(){{
                     window.location.reload(true);
