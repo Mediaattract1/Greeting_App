@@ -11,7 +11,7 @@ VIDEO_WIDTH = 1920
 VIDEO_HEIGHT = 1080
 FPS_DEFAULT = 30
 
-BASE_VIDEO_PATH = "template_HB1_wide.mp4"  # your birthday template in root
+BASE_VIDEO_PATH = "template_HB1_wide.mp4"  # birthday template in root
 OUTPUT_FOLDER = "generated_videos"
 OUTPUT_PATH = os.path.join(OUTPUT_FOLDER, "video.mp4")
 
@@ -24,12 +24,14 @@ st.set_page_config(layout="wide")
 # FONT HELPERS
 # ===========================
 def _compute_fontsize(name: str) -> int:
+    """Scale font size based on name length."""
     n = max(len(name), 4)
     size = int(1300 / n)
     return max(60, min(220, size))
 
 
 def _load_font(size: int):
+    """Try a few fonts; fall back to default."""
     for f in ["DejaVuSans-Bold.ttf", "DejaVuSans.ttf", "Arial.ttf"]:
         try:
             return ImageFont.truetype(f, size)
@@ -40,11 +42,15 @@ def _load_font(size: int):
 
 # ===========================
 # VIDEO GENERATOR
-# Name comes from the RIGHT, one letter at a time,
-# ends up in the RIGHT HALF of the screen at cake height.
+# - Uses template_HB1_wide.mp4 as background
+# - Name:
+#     * Smart caps (ALL CAPS respected, else Title Case)
+#     * Types in from the RIGHT, one letter at a time
+#     * Ends up LOWER on the screen (cake height)
+#     * Centered in the RIGHT HALF between cake and right edge
 # ===========================
 def create_name_animation(name: str, output_path: str):
-    # Smart capitalization: ALL CAPS stays, otherwise Title Case
+    # Smart capitalization
     raw_name = (name or "").strip() or "Friend"
     if raw_name.isupper():
         name = raw_name
@@ -76,19 +82,22 @@ def create_name_animation(name: str, output_path: str):
     full_w = full_bbox[2] - full_bbox[0]
     full_h = full_bbox[3] - full_bbox[1]
 
-    # Vertical: lower on the screen, around where cake usually is
-    center_y = int(VIDEO_HEIGHT * 0.60)  # 60% down the screen
-    y = center_y - full_h // 2
+    # -------- POSITIONING LOGIC --------
+    # Vertical: lower, closer to cake height (around 70% down)
+    cake_band_center_y = int(VIDEO_HEIGHT * 0.70)
+    y = cake_band_center_y - full_h // 2
 
-    # Horizontal: assume cake is on left half; center text in the right half
-    cake_right = int(VIDEO_WIDTH * 0.5)
-    target_center_x = (cake_right + VIDEO_WIDTH) // 2  # center of right half
+    # Horizontal: assume cake occupies roughly LEFT 55% of the screen.
+    # We center the name in the RIGHT HALF between cake edge and screen edge.
+    cake_right_x = int(VIDEO_WIDTH * 0.55)
+    right_edge_x = int(VIDEO_WIDTH * 0.98)
+    target_center_x = (cake_right_x + right_edge_x) // 2
 
     # Sliding from off-screen right
     slide_seconds = 1.5
     slide_frames = max(int(slide_seconds * fps), 1)
 
-    # Typewriter timing (independent of slide)
+    # Typewriter timing
     letter_interval = 0.12  # seconds per letter
 
     frame_index = 0
@@ -105,18 +114,18 @@ def create_name_animation(name: str, output_path: str):
         else:
             progress_slide = 1.0
 
-        # Base frame, resized to 1920x1080
+        # Base frame → PIL → resize to 1920x1080 to fill as much as possible
         pil_frame = Image.fromarray(frame).convert("RGB")
         if pil_frame.size != (VIDEO_WIDTH, VIDEO_HEIGHT):
             pil_frame = pil_frame.resize((VIDEO_WIDTH, VIDEO_HEIGHT))
 
         draw = ImageDraw.Draw(pil_frame)
 
-        # Width of the currently visible substring
+        # Width of current substring
         sub_bbox = d.textbbox((0, 0), visible_text, font=font)
         sub_w = sub_bbox[2] - sub_bbox[0]
 
-        # Slide center from off-screen right to target center
+        # Slide center from off-screen right to target_center_x
         start_center_x = VIDEO_WIDTH + sub_w // 2
         current_center_x = int(
             start_center_x + (target_center_x - start_center_x) * progress_slide
@@ -144,7 +153,7 @@ else:
 
 
 # ===========================
-# UPDATE MODE (no preview)
+# UPDATE MODE (no preview, just generate)
 # ===========================
 if mode == "update":
     st.title("Birthday Greeting Update")
@@ -163,35 +172,31 @@ if mode == "update":
 
 
 # ===========================
-# PLAYER MODE (Stick)
+# PLAYER MODE (Stick / browser viewer)
 # ===========================
 else:
-    # Make video fill the screen as much as Streamlit allows
+    # Try to visually maximize the video area
     st.markdown(
         """
         <style>
-        html, body, [data-testid="stAppViewContainer"], [data-testid="stApp"], .stVideo {
+        html, body, [data-testid="stAppViewContainer"], [data-testid="stApp"] {
             margin: 0;
             padding: 0;
             background-color: black;
         }
-        .stVideo video {
+        .stVideo > video {
             width: 100vw !important;
             height: 100vh !important;
-            object-fit: contain;
+            object-fit: contain !important;
         }
         </style>
         """,
         unsafe_allow_html=True,
     )
 
-    # Auto-refresh every 10 seconds so the player "listens" for new videos
-    st.markdown(
-        "<meta http-equiv='refresh' content='10'>",
-        unsafe_allow_html=True,
-    )
-
     if not os.path.exists(OUTPUT_PATH):
         st.write("Waiting for first greeting video...")
     else:
+        # For the stick: it will load this URL and play this video.
+        # For browsers: some may require you to hit "play" once, depending on autoplay policy.
         st.video(OUTPUT_PATH)
