@@ -1,242 +1,285 @@
-import os
-import time
-
-import numpy as np
-import imageio
-from PIL import Image, ImageDraw, ImageFont
 import streamlit as st
+from PIL import Image, ImageDraw, ImageFont
+import numpy as np
+import os
+import sys
+import time
+import shutil
+import gc
+import base64
 
-# ===========================
-# PATHS & GLOBAL SETTINGS
-# ===========================
-VIDEO_WIDTH = 1920
-VIDEO_HEIGHT = 1080
-FPS_DEFAULT = 30
+# --- CONFIGURATION ---
+BASE_URL = "https://greeting-app-wh2w.onrender.com"
+TEMPLATE_FILE = "template_HB1_wide.mp4"
+OUTPUT_FOLDER = "generated_videos"
+TARGET_RES = (1920, 1080)
 
-BASE_VIDEO_PATH = "template_HB1_wide.mp4"  # must be in repo root
+# --- SAFE SETUP ---
+os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
-STATIC_FOLDER = "static"
-STATIC_VIDEO_PATH = os.path.join(STATIC_FOLDER, "current.mp4")
-STATIC_VERSION_PATH = os.path.join(STATIC_FOLDER, "current.version")
-
-os.makedirs(STATIC_FOLDER, exist_ok=True)
-
-st.set_page_config(layout="wide")
-
-
-# ===========================
-# FONT HELPERS
-# ===========================
-def _compute_fontsize(name: str) -> int:
-    """Scale font size based on name length."""
-    n = max(len(name), 4)
-    size = int(1300 / n)
-    return max(60, min(220, size))
-
-
-def _load_font(size: int) -> ImageFont.FreeTypeFont:
-    """Try a few fonts; fall back to default."""
-    for fname in ["DejaVuSans-Bold.ttf", "DejaVuSans.ttf", "Arial.ttf"]:
+# --- MOVIEPY IMPORT FIXER ---
+try:
+    from moviepy.video.io.VideoFileClip import VideoFileClip
+    from moviepy.video.compositing.CompositeVideoClip import CompositeVideoClip
+    from moviepy.video.VideoClip import ImageClip
+    try:
+        from moviepy.video.fx import FadeOut
+    except ImportError:
         try:
-            return ImageFont.truetype(fname, size)
-        except Exception:
-            continue
-    return ImageFont.load_default()
+            import moviepy.video.fx.all as vfx
+            FadeOut = vfx.FadeOut
+        except:
+            FadeOut = None
+except ImportError:
+    import moviepy.editor as mp
+    VideoFileClip = mp.VideoFileClip
+    CompositeVideoClip = mp.CompositeVideoClip
+    ImageClip = mp.ImageClip
+    FadeOut = None
 
+# --- HELPER FUNCTIONS ---
+def safe_resize(clip, size):
+    try:
+        return clip.resized(new_size=size)
+    except:
+        return clip.resize(newsize=size)
 
-# ===========================
-# VIDEO GENERATOR (imageio)
-# - Reads template_HB1_wide.mp4 frame by frame
-# - Name:
-#     * Smart caps (ALL CAPS preserved, else Title Case)
-#     * Types in from the RIGHT, one letter at a time
-#     * Slides smoothly from off-screen right
-#     * Ends lower on the screen, in the right-side area
-# ===========================
-def create_name_animation(name: str, output_path: str, version_path: str) -> None:
-    # Smart capitalization
-    raw_name = (name or "").strip() or "Friend"
-    if raw_name.isupper():
-        name = raw_name
-    else:
-        name = raw_name.title()
+def get_ad_file():
+    for ext in ['.mp4', '.mov', '.gif', '.png', '.jpg']:
+        if os.path.exists("ad" + ext):
+            return "ad" + ext
+    return None
 
-    if not os.path.exists(BASE_VIDEO_PATH):
-        raise FileNotFoundError(f"Template video not found: {BASE_VIDEO_PATH}")
+def create_full_name_image(text, video_h, filename):
+    font_size = int(video_h * 0.12)
+    try:
+        font = ImageFont.truetype("arialbd.ttf", font_size)
+    except:
+        try:
+            font = ImageFont.truetype("arial.ttf", font_size)
+        except:
+            font = ImageFont.load_default()
 
-    reader = imageio.get_reader(BASE_VIDEO_PATH, format="ffmpeg")
-    meta = reader.get_meta_data()
-    fps = meta.get("fps", FPS_DEFAULT)
+    dummy = ImageDraw.Draw(Image.new('RGB', (1, 1)))
+    bbox = dummy.textbbox((0, 0), text, font=font)
+    text_w = bbox[2] - bbox[0]
+    text_h = bbox[3] - bbox[1]
 
-    # Font & full text metrics
-    fontsize = _compute_fontsize(name)
-    font = _load_font(fontsize)
+    pad = 50
+    img = Image.new('RGBA', (text_w + pad * 2, text_h + pad * 2), (255, 255, 255, 0))
+    draw = ImageDraw.Draw(img)
 
-    dummy_img = Image.new("RGB", (VIDEO_WIDTH, VIDEO_HEIGHT), (0, 0, 0))
-    draw_dummy = ImageDraw.Draw(dummy_img)
-    full_bbox = draw_dummy.textbbox((0, 0), name, font=font)
-    full_w = full_bbox[2] - full_bbox[0]
-    full_h = full_bbox[3] - full_bbox[1]
+    x = pad
+    y = pad
+    stroke = 4
+    for i in range(-stroke, stroke + 1):
+        for j in range(-stroke, stroke + 1):
+            draw.text((x + i, y + j), text, font=font, fill="black")
+    draw.text((x, y), text, font=font, fill="white")
 
-    # --- Positioning: lower right-side region ---
-    # Vertical: ~70% down the screen (around cake height)
-    band_center_y = int(VIDEO_HEIGHT * 0.70)
-    y_final = band_center_y - full_h // 2
+    img.save(filename)
+    return img.width, img.height
 
-    # Horizontal: we define a "name box" centered in the right-side area
-    target_center_x = int(VIDEO_WIDTH * 0.72)
-    box_final_left = target_center_x - full_w // 2
+# --- APP LOGIC ---
+st.set_page_config(page_title="Sign Manager", layout="wide", initial_sidebar_state="collapsed")
 
-    # Start with the entire box off-screen to the right
-    box_start_left = VIDEO_WIDTH + full_w
+query_params = st.query_params
+mode = query_params.get("mode", "display")
 
-    # --- Timing ---
-    letter_interval = 0.12  # seconds per letter
-    slide_duration = 1.5    # seconds for slide-in
+st.markdown("""
+    <style>
+    #MainMenu, footer, header, [data-testid="stToolbar"] {display: none !important;}
+    .block-container {padding: 0 !important; margin: 0 !important; max-width: 100% !important;}
+    ::-webkit-scrollbar {display: none;}
+    body, .stApp {background-color: black;}
+    p, label, h1, h2, h3 {color: white !important;}
+    .stTextInput input {color: black !important;}
+    </style>
+""", unsafe_allow_html=True)
 
-    total_letters = len(name)
-
-    writer = imageio.get_writer(
-        output_path,
-        fps=fps,
-        codec="libx264",
-        format="ffmpeg",
-    )
-
-    frame_index = 0
-    for frame in reader:
-        t = frame_index / fps
-
-        # Typewriter: number of letters visible at time t
-        letters_visible = max(1, min(total_letters, int(t / letter_interval) + 1))
-        visible_text = name[:letters_visible]
-
-        # Smooth slide progress 0..1 over slide_duration
-        p = min(1.0, t / slide_duration) if slide_duration > 0 else 1.0
-
-        # Current left of the "name box" (anchored; no jitter)
-        box_left = int(box_start_left + (box_final_left - box_start_left) * p)
-        x = box_left
-        y = y_final
-
-        # Base frame → PIL → resize to 1920x1080
-        pil_frame = Image.fromarray(frame).convert("RGB")
-        if pil_frame.size != (VIDEO_WIDTH, VIDEO_HEIGHT):
-            pil_frame = pil_frame.resize((VIDEO_WIDTH, VIDEO_HEIGHT))
-
-        draw = ImageDraw.Draw(pil_frame)
-        draw.text((x, y), visible_text, font=font, fill=(255, 255, 255))
-
-        writer.append_data(np.array(pil_frame))
-        frame_index += 1
-
-    reader.close()
-    writer.close()
-
-    # Update version file (for the player heartbeat)
-    with open(version_path, "w") as vf:
-        vf.write(str(time.time()))
-
-
-# ===========================
-# STREAMLIT ROUTER
-# ===========================
-params = st.query_params
-mode_val = params.get("mode", "player")
-if isinstance(mode_val, list):
-    mode = (mode_val[0] or "player").lower()
-else:
-    mode = (mode_val or "player").lower()
-
-
-# ===========================
-# UPDATE MODE (phone / web)
-# ===========================
+# === UPDATE MODE ===
 if mode == "update":
-    st.title("Birthday Greeting Update")
+    st.markdown("""<style>.block-container {padding: 2rem !important;}</style>""", unsafe_allow_html=True)
 
-    name = st.text_input("Enter Name Only", "")
+    if "status" not in st.session_state:
+        st.session_state.status = "idle"
 
-    if st.button("Update Greeting Video"):
-        if not name.strip():
-            st.error("Please enter a name.")
-        else:
+    if st.session_state.status == "idle":
+        st.title("Create Greeting")
+        with st.form("update_form"):
+            name_input = st.text_input("Enter Name:", max_chars=20).strip()
+            submit = st.form_submit_button("Update Sign", type="primary")
+
+        if submit and name_input:
+            st.session_state.status = "processing"
+            st.session_state.name_input = name_input
+            st.rerun()
+
+    elif st.session_state.status == "processing":
+        st.info("Creating Video... Please wait.")
+        prog = st.progress(0)
+
+        try:
+            full_text = st.session_state.name_input + "!"
+            TARGET_FILE = "video.mp4"
+            temp_out = "temp_render.mp4"
+            temp_img = "temp_text_overlay.png"
+
+            gc.collect()
+
+            if not os.path.exists(TEMPLATE_FILE):
+                st.error(f"Missing {TEMPLATE_FILE}")
+                st.stop()
+
+            clip = VideoFileClip(TEMPLATE_FILE)
+            img_w, img_h = create_full_name_image(full_text, clip.h, temp_img)
+            prog.progress(30)
+
+            txt_clip = ImageClip(temp_img).with_duration(clip.duration)
+
+            center_point_x = clip.w * 0.70
+            target_x = center_point_x - (img_w / 2)
+            target_y = (clip.h * 0.75) - (img_h / 2)
+
+            start_time = 2.0
+            slide_dur = 1.0
+
+            def slide_pos(t):
+                if t < slide_dur:
+                    p = 1 - ((1 - t) ** 3)
+                    curr_x = clip.w - ((clip.w - target_x) * p)
+                    return (int(curr_x), int(target_y))
+                return (int(target_x), int(target_y))
+
+            txt_clip = txt_clip.with_start(start_time).with_position(slide_pos)
+
             try:
-                with st.spinner("Rendering birthday video..."):
-                    create_name_animation(
-                        name,
-                        STATIC_VIDEO_PATH,
-                        STATIC_VERSION_PATH,
-                    )
-                st.success("Greeting updated. Screens will switch automatically.")
-            except Exception as e:
-                st.error(str(e))
+                if FadeOut:
+                    txt_clip = txt_clip.with_effects([FadeOut(1.0)])
+                else:
+                    txt_clip = txt_clip.fadeout(1.0)
+            except:
+                pass
 
+            final = CompositeVideoClip([clip, txt_clip])
 
-# ===========================
-# PLAYER MODE (Android Stick / TV)
-# ===========================
+            ad = get_ad_file()
+            if ad:
+                try:
+                    if ad.endswith(('.mp4', '.mov')):
+                        ac = VideoFileClip(ad)
+                    else:
+                        ac = ImageClip(ad).with_duration(15)
+
+                    try:
+                        ac = ac.resized(new_size=clip.size)
+                    except:
+                        ac = ac.resize(newsize=clip.size)
+
+                    ac = ac.with_start(final.duration)
+                    final = CompositeVideoClip([final, ac])
+                except:
+                    pass
+
+            prog.progress(60)
+            final.write_videofile(temp_out, codec='libx264', audio_codec='aac', fps=24, logger=None)
+
+            clip.close()
+            final.close()
+            gc.collect()
+
+            shutil.move(temp_out, os.path.join(OUTPUT_FOLDER, TARGET_FILE))
+            if os.path.exists(temp_img):
+                os.remove(temp_img)
+
+            prog.progress(100)
+            st.session_state.status = "done"
+            st.rerun()
+
+        except Exception as e:
+            st.error(f"Error: {e}")
+            if st.button("Try Again"):
+                st.session_state.status = "idle"
+                st.rerun()
+
+    elif st.session_state.status == "done":
+        st.balloons()
+        st.success(f"Success! Your Greeting for **{st.session_state.name_input}** is playing on the Screen.")
+        st.write("")
+        if st.button("Create New Greeting"):
+            st.session_state.status = "idle"
+            st.rerun()
+
+# === DISPLAY MODE ===
 else:
-    initial_ts = int(time.time())
+    TARGET_FILE = "video.mp4"
+    real_target = os.path.join(OUTPUT_FOLDER, TARGET_FILE)
 
-    html = f"""
-    <html>
-    <head>
-      <meta charset="utf-8" />
-      <style>
-        html, body {{
-          margin: 0;
-          padding: 0;
-          background-color: black;
-          overflow: hidden;
-        }}
-        #hbVideo {{
-          width: 100vw;
-          height: 100vh;
-          object-fit: contain;
-          background-color: black;
-        }}
-        /* Hide controls where possible */
-        video::-webkit-media-controls {{
-          display: none !important;
-        }}
-        video::-moz-media-controls {{
-          display: none !important;
-        }}
-      </style>
-    </head>
-    <body>
-      <video id="hbVideo" autoplay loop muted>
-        <source id="hbSource" src="/static/current.mp4?ts={initial_ts}" type="video/mp4" />
-      </video>
+    if os.path.exists(real_target):
+        video_bytes = open(real_target, 'rb').read()
+        video_b64 = base64.b64encode(video_bytes).decode()
 
-      <script>
-        let lastVersion = null;
-
-        async function checkUpdate() {{
-          try {{
-            const res = await fetch("/static/current.version?ts=" + Date.now());
-            if (!res.ok) return;
-            const text = (await res.text()).trim();
-            if (lastVersion !== null && text !== lastVersion) {{
-              const v = document.getElementById("hbVideo");
-              const s = document.getElementById("hbSource");
-              const stamp = Date.now();
-              s.src = "/static/current.mp4?ts=" + stamp;
-              v.load();
-              v.play();
+        # HTML5 PLAYER: FULLSCREEN + NO CROPPING (object-fit: contain)
+        html_code = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+        <style>
+            html, body {{
+                margin: 0;
+                padding: 0;
+                width: 100vw;
+                height: 100vh;
+                background-color: black;
+                overflow: hidden;
             }}
-            lastVersion = text;
-          }} catch (e) {{
-            // ignore errors; try again on next heartbeat
-          }}
-        }}
 
-        // Heartbeat: check every 15 seconds
-        setInterval(checkUpdate, 15000);
-      </script>
-    </body>
-    </html>
-    """
+            .video-wrapper {{
+                position: fixed;
+                inset: 0;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                background-color: black;
+            }}
 
-    st.markdown(html, unsafe_allow_html=True)
+            video {{
+                width: 100vw;
+                height: 100vh;
+                object-fit: contain;
+                pointer-events: none;
+            }}
+        </style>
+        </head>
+        <body>
+            <div class="video-wrapper">
+                <video autoplay loop muted playsinline>
+                    <source src="data:video/mp4;base64,{video_b64}" type="video/mp4">
+                </video>
+            </div>
+
+            <script>
+                setTimeout(function() {{
+                    window.location.reload(true);
+                }}, 5000);
+            </script>
+        </body>
+        </html>
+        """
+
+        current_stats = os.stat(real_target).st_mtime
+        if "last_version" not in st.session_state:
+            st.session_state.last_version = current_stats
+
+        # Let the browser/TV scale the page; 600 is enough for the iframe height
+        st.components.v1.html(html_code, height=600, scrolling=False)
+
+        if current_stats > st.session_state.last_version:
+            st.session_state.last_version = current_stats
+            st.rerun()
+
+    else:
+        st.info("Waiting for first update...")
+        time.sleep(3)
+        st.rerun()
