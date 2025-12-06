@@ -1,5 +1,4 @@
 import os
-import time
 import numpy as np
 import imageio
 from PIL import Image, ImageDraw, ImageFont
@@ -141,7 +140,7 @@ if mode == "update":
 
             st.success("Greeting Updated!")
 
-            # Read bytes for preview to avoid any caching oddities
+            # Preview from bytes (browser test screen)
             try:
                 with open(STATIC_VIDEO_PATH, "rb") as f:
                     video_bytes = f.read()
@@ -154,30 +153,22 @@ if mode == "update":
 # PLAYER MODE (Android Stick)
 # ===========================
 else:
-    # Compute a cache-busting query string based on file modification time
-    if os.path.exists(STATIC_VIDEO_PATH):
-        ts = int(os.path.getmtime(STATIC_VIDEO_PATH))
-    else:
-        ts = int(time.time())  # fallback, though file should exist after first update
-
-    src_url = f"/static/current.mp4?ts={ts}"
-
     # Fullscreen-style player page
+    # Add auto-refresh so the stick keeps "listening" for updates.
     st.markdown(
         """
+        <head>
+        <meta http-equiv="refresh" content="5">
         <style>
         body { background-color: black; margin: 0; }
         video { width: 100vw; height: 100vh; object-fit: contain; }
         </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    st.markdown(
-        f"""
+        </head>
+        <body>
         <video autoplay muted loop>
-            <source src="{src_url}" type="video/mp4">
+            <source src="/static/current.mp4" type="video/mp4">
         </video>
+        </body>
         """,
         unsafe_allow_html=True,
     )
