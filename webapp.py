@@ -1,211 +1,306 @@
-"""
-Generate a 1920x1080 MP4 where a name appears one letter at a time,
-with automatic font sizing based on name length.
-
-Can either:
-- Use a solid background color, OR
-- Overlay the animated name on top of an existing background video
-  (e.g. your cake / greeting animation).
-
-This is designed to plug into your existing Render / GitHub / Streamlit setup.
-"""
-
+import streamlit as st
+from PIL import Image, ImageDraw, ImageFont
 import numpy as np
-from moviepy.editor import (
-    VideoClip,
-    ColorClip,
-    TextClip,
-    VideoFileClip,
-    vfx,
-)
+import os
+import sys
+import time
+import shutil
+import gc
+import base64
+
+# --- CONFIGURATION ---
+BASE_URL = "https://greeting-app-wh2w.onrender.com"
+TEMPLATE_FILE = "template_HB1_wide.mp4"
+OUTPUT_FOLDER = "generated_videos"
+TARGET_RES = (1920, 1080)
+
+# --- SAFE SETUP ---
+os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+
+# --- MOVIEPY IMPORT FIXER (MODULAR, NO moviepy.editor) ---
+try:
+    from moviepy.video.io.VideoFileClip import VideoFileClip
+    from moviepy.video.compositing.CompositeVideoClip import CompositeVideoClip
+    from moviepy.video.VideoClip import ImageClip
+    try:
+        from moviepy.video.fx.all import fadeout as moviepy_fadeout
+
+        def apply_fadeout(clip, duration):
+            return moviepy_fadeout(clip, duration)
+    except Exception:
+        # If fadeout effect is missing, just return the clip unchanged
+        def apply_fadeout(clip, duration):
+            return clip
+
+except ImportError as e:
+    # Hard fail with a clear message if MoviePy is not installed at all
+    raise RuntimeError(
+        "MoviePy is required but not installed. "
+        "Add 'moviepy', 'imageio', and 'imageio-ffmpeg' to your requirements.txt."
+    ) from e
 
 
-VIDEO_WIDTH = 1920
-VIDEO_HEIGHT = 1080
-FPS = 30
+# --- HELPER FUNCTIONS ---
+def safe_resize(clip, size):
+    try:
+        return clip.resized(new_size=size)
+    except Exception:
+        return clip.resize(newsize=size)
 
 
-def _compute_fontsize(name: str) -> int:
-    """
-    Heuristic to pick a font size based on name length.
-    Short names => bigger font, long names => smaller font.
-    Tuned for 1920x1080 output.
-    """
-    n_chars = max(len(name), 4)  # avoid tiny denominators
-    approx = int(1300 / n_chars)  # main knob: bigger number -> bigger text
-
-    # Clamp to a reasonable range
-    return max(50, min(220, approx))
+def get_ad_file():
+    for ext in ['.mp4', '.mov', '.gif', '.png', '.jpg']:
+        if os.path.exists("ad" + ext):
+            return "ad" + ext
+    return None
 
 
-def create_name_animation(
-    name: str,
-    output_path: str = "name_greeting.mp4",
-    *,
-    # If you pass a path here, the name will be overlaid on that video.
-    # If None, we use a solid background.
-    background_video_path: str | None = None,
-    bg_color: tuple[int, int, int] = (0, 0, 0),
-    text_color: str = "white",
-    font: str = "DejaVu-Sans-Bold",
-    # Timing controls
-    letter_interval: float | None = None,
-    type_fraction: float = 0.6,   # fraction of duration spent "typing"
-    hold_time: float | None = None,
-    fade_in: float = 0.5,
-    fade_out: float = 0.5,
-):
-    """
-    Create a 1920x1080 MP4 with the given name animated letter-by-letter.
+def create_full_name_image(text, video_h, filename):
+    font_size = int(video_h * 0.12)
+    try:
+        font = ImageFont.truetype("arialbd.ttf", font_size)
+    except:
+        try:
+            font = ImageFont.truetype("arial.ttf", font_size)
+        except:
+            font = ImageFont.load_default()
 
-    Parameters
-    ----------
-    name : str
-        The name to display (can be multiple words).
-    output_path : str
-        Output MP4 file path.
-    background_video_path : str | None
-        If provided, this video is used as the background and resized to 1920x1080.
-        If None, a solid bg_color is used.
-    bg_color : (R, G, B)
-        Background color when no background_video_path is supplied.
-    text_color : str
-        Name text color.
-    font : str
-        Font name installed in the Render container.
-    letter_interval : float | None
-        Seconds per letter. If None, computed from duration & name length.
-    type_fraction : float
-        For background videos: fraction of total duration used for the typing effect (0–1).
-        Ignored when there is no background video (we compute timing from name length).
-    hold_time : float | None
-        Extra time to hold the full name after typing finishes when using *no* background video.
-        If None and background_video_path is set, we just use the background video duration.
-    fade_in / fade_out : float
-        Fade duration (seconds) at start/end for smoother looping.
-    """
-    name = (name or "").strip()
-    if not name:
-        name = "Friend"
+    dummy = ImageDraw.Draw(Image.new('RGB', (1, 1)))
+    bbox = dummy.textbbox((0, 0), text, font=font)
+    text_w = bbox[2] - bbox[0]
+    text_h = bbox[3] - bbox[1]
 
-    n_chars = len(name)
-    fontsize = _compute_fontsize(name)
+    pad = 50
+    img = Image.new('RGBA', (text_w + pad * 2, text_h + pad * 2), (255, 255, 255, 0))
+    draw = ImageDraw.Draw(img)
 
-    # --------- Background clip setup ---------
-    if background_video_path is not None:
-        bg = VideoFileClip(background_video_path).resize((VIDEO_WIDTH, VIDEO_HEIGHT))
-        duration = bg.duration
+    x = pad
+    y = pad
+    stroke = 4
+    for i in range(-stroke, stroke + 1):
+        for j in range(-stroke, stroke + 1):
+            draw.text((x + i, y + j), text, font=font, fill="black")
+    draw.text((x, y), text, font=font, fill="white")
 
-        # Typing happens in the first part of the clip
-        type_duration = max(0.5, duration * type_fraction)
+    img.save(filename)
+    return img.width, img.height
 
-        if letter_interval is None:
-            letter_interval = max(0.05, type_duration / max(n_chars, 1))
 
-        # No separate hold_time needed; background duration controls end
-        bg_clip = bg
+# --- APP LOGIC ---
+st.set_page_config(page_title="Sign Manager", layout="wide", initial_sidebar_state="collapsed")
+
+query_params = st.query_params
+# Handle both list-style and direct values safely
+_raw_mode = query_params.get("mode", "display")
+if isinstance(_raw_mode, list):
+    mode = _raw_mode[0] if _raw_mode else "display"
+else:
+    mode = _raw_mode or "display"
+
+st.markdown("""
+    <style>
+    #MainMenu, footer, header, [data-testid="stToolbar"] {display: none !important;}
+    .block-container {padding: 0 !important; margin: 0 !important; max-width: 100% !important;}
+    ::-webkit-scrollbar {display: none;}
+    body, .stApp {background-color: black;}
+    p, label, h1, h2, h3 {color: white !important;}
+    .stTextInput input {color: black !important;}
+    </style>
+""", unsafe_allow_html=True)
+
+# === UPDATE MODE ===
+if mode == "update":
+    st.markdown("""<style>.block-container {padding: 2rem !important;}</style>""", unsafe_allow_html=True)
+
+    if "status" not in st.session_state:
+        st.session_state.status = "idle"
+
+    if st.session_state.status == "idle":
+        st.title("Create Greeting")
+        with st.form("update_form"):
+            name_input = st.text_input("Enter Name:", max_chars=20).strip()
+            submit = st.form_submit_button("Update Sign", type="primary")
+
+        if submit and name_input:
+            st.session_state.status = "processing"
+            st.session_state.name_input = name_input
+            st.rerun()
+
+    elif st.session_state.status == "processing":
+        st.info("Creating Video... Please wait.")
+        prog = st.progress(0)
+
+        try:
+            full_text = st.session_state.name_input + "!"
+            TARGET_FILE = "video.mp4"
+            temp_out = "temp_render.mp4"
+            temp_img = "temp_text_overlay.png"
+
+            gc.collect()
+
+            if not os.path.exists(TEMPLATE_FILE):
+                st.error(f"Missing {TEMPLATE_FILE}")
+                st.stop()
+
+            # Load template
+            clip = VideoFileClip(TEMPLATE_FILE)
+            img_w, img_h = create_full_name_image(full_text, clip.h, temp_img)
+            prog.progress(30)
+
+            txt_clip = ImageClip(temp_img).with_duration(clip.duration)
+
+            # Positioning logic
+            center_point_x = clip.w * 0.70
+            target_x = center_point_x - (img_w / 2)
+            target_y = (clip.h * 0.75) - (img_h / 2)
+
+            start_time = 2.0
+            slide_dur = 1.0
+
+            def slide_pos(t):
+                if t < slide_dur:
+                    p = 1 - ((1 - t) ** 3)
+                    curr_x = clip.w - ((clip.w - target_x) * p)
+                    return (int(curr_x), int(target_y))
+                return (int(target_x), int(target_y))
+
+            txt_clip = txt_clip.with_start(start_time).with_position(slide_pos)
+
+            # Fade out text near the end
+            try:
+                txt_clip = apply_fadeout(txt_clip, 1.0)
+            except Exception:
+                # If something goes wrong, just keep the text as-is
+                pass
+
+            final = CompositeVideoClip([clip, txt_clip])
+
+            # Optional ad file at the end
+            ad = get_ad_file()
+            if ad:
+                try:
+                    if ad.lower().endswith(('.mp4', '.mov')):
+                        ac = VideoFileClip(ad)
+                    else:
+                        ac = ImageClip(ad).with_duration(15)
+
+                    try:
+                        ac = ac.resized(new_size=clip.size)
+                    except Exception:
+                        ac = ac.resize(newsize=clip.size)
+
+                    ac = ac.with_start(final.duration)
+                    final = CompositeVideoClip([final, ac])
+                except Exception:
+                    pass
+
+            prog.progress(60)
+            final.write_videofile(
+                temp_out,
+                codec='libx264',
+                audio_codec='aac',
+                fps=24,
+                logger=None
+            )
+
+            # Cleanup
+            clip.close()
+            final.close()
+            gc.collect()
+
+            shutil.move(temp_out, os.path.join(OUTPUT_FOLDER, TARGET_FILE))
+            if os.path.exists(temp_img):
+                os.remove(temp_img)
+
+            prog.progress(100)
+            st.session_state.status = "done"
+            st.rerun()
+
+        except Exception as e:
+            st.error(f"Error: {e}")
+            if st.button("Try Again"):
+                st.session_state.status = "idle"
+                st.rerun()
+
+    elif st.session_state.status == "done":
+        st.balloons()
+        st.success(f"Success! Your Greeting for **{st.session_state.name_input}** is playing on the Screen.")
+        st.write("")
+        if st.button("Create New Greeting"):
+            st.session_state.status = "idle"
+            st.rerun()
+
+# === DISPLAY MODE ===
+else:
+    TARGET_FILE = "video.mp4"
+    real_target = os.path.join(OUTPUT_FOLDER, TARGET_FILE)
+
+    if os.path.exists(real_target):
+        video_bytes = open(real_target, 'rb').read()
+        video_b64 = base64.b64encode(video_bytes).decode()
+
+        # HTML5 PLAYER: FULLSCREEN + NO CROPPING (object-fit: contain)
+        html_code = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+        <style>
+            html, body {{
+                margin: 0;
+                padding: 0;
+                width: 100vw;
+                height: 100vh;
+                background-color: black;
+                overflow: hidden;
+            }}
+
+            .video-wrapper {{
+                position: fixed;
+                inset: 0;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                background-color: black;
+            }}
+
+            video {{
+                width: 100vw;
+                height: 100vh;
+                object-fit: contain;      /* Full video visible, no cropping */
+                pointer-events: none;     /* No controls / clicks */
+            }}
+        </style>
+        </head>
+        <body>
+            <div class="video-wrapper">
+                <video autoplay loop muted playsinline>
+                    <source src="data:video/mp4;base64,{video_b64}" type="video/mp4">
+                </video>
+            </div>
+
+            <script>
+                // Periodic refresh so Fully Kiosk picks up new videos
+                setTimeout(function() {{
+                    window.location.reload(true);
+                }}, 5000);
+            </script>
+        </body>
+        </html>
+        """
+
+        current_stats = os.stat(real_target).st_mtime
+        if "last_version" not in st.session_state:
+            st.session_state.last_version = current_stats
+
+        # Let the browser/TV scale the page; a smaller iframe height avoids vertical clipping
+        st.components.v1.html(html_code, height=600, scrolling=False)
+
+        if current_stats > st.session_state.last_version:
+            st.session_state.last_version = current_stats
+            st.rerun()
 
     else:
-        # No background video: we build a solid-color clip whose duration
-        # is driven by the typing + optional hold.
-        if letter_interval is None:
-            # Target ~1.2–1.8 seconds total typing
-            letter_interval = max(0.05, min(0.18, 1.4 / max(n_chars, 1)))
-
-        type_duration = n_chars * letter_interval
-        if hold_time is None:
-            hold_time = 1.5  # seconds to keep full name on screen
-
-        duration = type_duration + hold_time
-
-        bg_clip = ColorClip(
-            size=(VIDEO_WIDTH, VIDEO_HEIGHT),
-            color=bg_color,
-            duration=duration,
-        )
-
-    # --------- Precompute partial text clips ---------
-    partial_texts = [name[:i] for i in range(1, n_chars + 1)]
-    max_text_width = int(VIDEO_WIDTH * 0.8)  # margin on left/right
-
-    partial_clips = []
-    for txt in partial_texts:
-        # method="caption" handles multi-word strings nicely
-        tc = TextClip(
-            txt,
-            fontsize=fontsize,
-            color=text_color,
-            font=font,
-            method="caption",
-            size=(max_text_width, None),
-            align="center",
-        )
-        partial_clips.append(tc)
-
-    # --------- Frame generator ---------
-    def make_frame(t: float):
-        # Background frame
-        frame = bg_clip.get_frame(t).copy()
-
-        # Decide how many letters should be visible at time t
-        if t <= 0:
-            index = 1  # show first letter at t ~ 0
-        else:
-            index = int(t / letter_interval) + 1
-            index = max(1, min(index, n_chars))
-
-        text_clip = partial_clips[index - 1]
-
-        text_frame = text_clip.get_frame(0)
-        th, tw, _ = text_frame.shape
-        x = (VIDEO_WIDTH - tw) // 2
-        y = (VIDEO_HEIGHT - th) // 2
-
-        # Overlay text in the center
-        frame[y:y + th, x:x + tw, :] = text_frame
-
-        return frame
-
-    animated_clip = VideoClip(make_frame, duration=duration)
-
-    # Fade in/out so your Android loop doesn’t feel abrupt
-    if fade_in > 0:
-        animated_clip = animated_clip.fx(vfx.fadein, fade_in)
-    if fade_out > 0:
-        animated_clip = animated_clip.fx(vfx.fadeout, fade_out)
-
-    # --------- Export ---------
-    animated_clip.write_videofile(
-        output_path,
-        fps=FPS,
-        codec="libx264",
-        audio=False,
-        preset="medium",
-        threads=4,
-    )
-
-
-if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Generate name animation video.")
-    parser.add_argument("name", help="Name to display, e.g. 'Happy Birthday Mary Ann'")
-    parser.add_argument(
-        "-o",
-        "--output",
-        default="name_greeting.mp4",
-        help="Output MP4 filename (default: name_greeting.mp4)",
-    )
-    parser.add_argument(
-        "-b",
-        "--background",
-        default=None,
-        help="Optional background video path (cake, animation, etc.)",
-    )
-    args = parser.parse_args()
-
-    create_name_animation(
-        name=args.name,
-        output_path=args.output,
-        background_video_path=args.background if args.background else None,
-    )
+        st.info("Waiting for first update...")
+        time.sleep(3)
+        st.rerun()
