@@ -1,128 +1,126 @@
-import streamlit as st
-from PIL import Image, ImageDraw, ImageFont
-import numpy as np
 import os
-import time
-import shutil
-import gc
-import base64
+import tempfile
 
-# --- CONFIGURATION ---
-BASE_URL = "https://greeting-app-wh2w.onrender.com"
-TEMPLATE_FILE = "template_HB1_wide.mp4"
-OUTPUT_FOLDER = "generated_videos"
-TARGET_RES = (1920, 1080)
+import streamlit as st
+import numpy as np
+from moviepy.editor import (
+    VideoClip,
+    ColorClip,
+    TextClip,
+    VideoFileClip,
+    vfx,
+)
 
-# --- SAFE SETUP ---
-os.makedirs(OUTPUT_FOLDER, exist_ok=True)
-
-# --- MOVIEPY IMPORTS (MODULAR, RENDER SAFE) ---
-try:
-    from moviepy.video.io.VideoFileClip import VideoFileClip
-    from moviepy.video.compositing.CompositeVideoClip import CompositeVideoClip
-    from moviepy.video.VideoClip import ImageClip
-    from moviepy.video.fx import all as vfx
-
-    def apply_fadeout(clip, duration):
-        try:
-            return vfx.fadeout(clip, duration)
-        except Exception:
-            return clip
-
-    def apply_fadein(clip, duration):
-        try:
-            return vfx.fadein(clip, duration)
-        except Exception:
-            return clip
-
-    def apply_typewriter(clip, duration):
-        w, h = clip.size
-
-        def x2_func(t):
-            progress = min(1.0, max(0.0, t / duration))
-            return int(w * progress)
-
-        try:
-            return vfx.crop(clip, x1=0, y1=0, x2=x2_func, y2=h)
-        except Exception:
-            return clip
-
-except ImportError as e:
-    raise RuntimeError(
-        "MoviePy failed to import. Ensure moviepy, imageio, and imageio-ffmpeg are installed."
-    ) from e
+# -----------------------
+# GLOBAL CONFIG
+# -----------------------
+VIDEO_WIDTH = 1920
+VIDEO_HEIGHT = 1080
+FPS = 30
 
 
-# --- HELPER FUNCTIONS ---
-def get_ad_file():
-    for ext in ['.mp4', '.mov', '.gif', '.png', '.jpg']:
-        if os.path.exists("ad" + ext):
-            return "ad" + ext
-    return None
+# -----------------------
+# VIDEO GENERATION LOGIC
+# -----------------------
+def _compute_fontsize(name: str) -> int:
+    """
+    Decide font size based on name length.
+    Shorter names -> larger font, longer names -> smaller font.
+    Tuned for 1920x1080.
+    """
+    name = name or ""
+    n_chars = max(len(name), 4)  # avoid tiny denominators
+    approx = int(1300 / n_chars)  # main knob: bigger -> larger text
+
+    # Clamp to a reasonable range
+    return max(50, min(220, approx))
 
 
-def measure_text_size(text, font):
-    img = Image.new('RGB', (1, 1))
-    draw = ImageDraw.Draw(img)
-    bbox = draw.textbbox((0, 0), text, font=font)
-    return bbox[2] - bbox[0], bbox[3] - bbox[1]
+def create_name_animation(
+    name: str,
+    output_path: str,
+    *,
+    background_video_path: str | None = None,
+    bg_color: tuple[int, int, int] = (0, 0, 0),
+    text_color: str = "white",
+    font: str = "DejaVu-Sans-Bold",
+    letter_interval: float | None = None,
+    type_fraction: float = 0.6,
+    hold_time: float | None = None,
+    fade_in: float = 0.5,
+    fade_out: float = 0.5,
+) -> None:
+    """
+    Create a 1920x1080 MP4 where the given name appears one letter at a time.
 
+    If background_video_path is provided:
+        - That video (cake, animation, etc.) is resized to 1920x1080 and used as background.
+        - Typing happens in the first `type_fraction` of the video duration.
 
-def create_full_name_image(text, video_w, video_h, filename, max_width_ratio=0.75):
-    max_text_width = int(video_w * max_width_ratio)
-    font_size = int(video_h * 0.22)
+    If background_video_path is None:
+        - A solid color background is used.
+        - Duration is: (typing time) + (hold_time).
 
-    def load_font(sz):
-        for f in ["arialbd.ttf", "arial.ttf"]:
-            try:
-                return ImageFont.truetype(f, sz)
-            except:
-                pass
-        return ImageFont.load_default()
+    Parameters
+    ----------
+    name : str
+        The name to display (can be multiple words).
+    output_path : str
+        Path of the output MP4 file.
+    background_video_path : str | None
+        Optional path to an existing MP4 used as background.
+    bg_color : tuple[int, int, int]
+        Background color when no background video is provided.
+    text_color : str
+        Color of the name text.
+    font : str
+        System font available in the Render container.
+    letter_interval : float | None
+        Seconds per letter. If None, computed automatically.
+    type_fraction : float
+        When using a background video, fraction of its duration used for typing.
+    hold_time : float | None
+        Extra time to hold the full name (no background video mode).
+    fade_in : float
+        Fade-in duration (seconds).
+    fade_out : float
+        Fade-out duration (seconds).
+    """
+    name = (name or "").strip()
+    if not name:
+        name = "Friend"
 
-    while font_size > 12:
-        font = load_font(font_size)
-        tw, th = measure_text_size(text, font)
-        if tw <= max_text_width:
-            break
-        font_size -= 2
+    n_chars = len(name)
+    fontsize = _compute_fontsize(name)
 
-    font = load_font(font_size)
-    tw, th = measure_text_size(text, font)
+    # --------- Background clip ---------
+    if background_video_path:
+        bg = VideoFileClip(background_video_path).resize((VIDEO_WIDTH, VIDEO_HEIGHT))
+        duration = bg.duration
 
-    pad = 50
-    img_w, img_h = tw + pad * 2, th + pad * 2
+        type_duration = max(0.5, duration * type_fraction)
 
-    img = Image.new("RGBA", (img_w, img_h), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
+        if letter_interval is None:
+            letter_interval = max(0.05, type_duration / max(n_chars, 1))
 
-    for i in range(-3, 4):
-        for j in range(-3, 4):
-            draw.text((pad + i, pad + j), text, font=font, fill="black")
+        bg_clip = bg
+    else:
+        # Solid background mode
+        if letter_interval is None:
+            # Target roughly 1.2–1.8 sec typing total
+            letter_interval = max(0.05, min(0.18, 1.4 / max(n_chars, 1)))
 
-    draw.text((pad, pad), text, font=font, fill="white")
-    img.save(filename)
+        type_duration = n_chars * letter_interval
+        if hold_time is None:
+            hold_time = 1.5  # seconds full name on screen
 
-    return img_w, img_h
+        duration = type_duration + hold_time
 
+        bg_clip = ColorClip(
+            size=(VIDEO_WIDTH, VIDEO_HEIGHT),
+            color=bg_color,
+            duration=duration,
+        )
 
-# --- STREAMLIT PAGE SETUP ---
-st.set_page_config(page_title="Sign Manager", layout="wide", initial_sidebar_state="collapsed")
-
-query_params = st.query_params
-mode = query_params.get("mode", "display")
-if isinstance(mode, list):
-    mode = mode[0]
-
-st.markdown("""
-<style>
-#MainMenu, footer, header, [data-testid="stToolbar"] {display: none !important;}
-.block-container {padding: 0 !important; margin: 0 !important; max-width: 100% !important;}
-::-webkit-scrollbar {display: none;}
-body, .stApp {background-color: black;}
-p, label, h1, h2, h3 {color: white !important;}
-.stTextInput input {color: black !important;}
-</style>
-""", unsafe_allow_html=True)
-
-# =====
+    # --------- Precompute partial text clips ---------
+    partial_texts = [name[:i] for i in range]()_
