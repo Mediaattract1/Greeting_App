@@ -11,7 +11,7 @@ VIDEO_WIDTH = 1920
 VIDEO_HEIGHT = 1080
 FPS_DEFAULT = 30
 
-BASE_VIDEO_PATH = "template_HB1_wide.mp4"  # your birthday template in root
+BASE_VIDEO_PATH = "template_HB1_wide.mp4"  # birthday template in root
 OUTPUT_FOLDER = "generated_videos"
 OUTPUT_PATH = os.path.join(OUTPUT_FOLDER, "video.mp4")
 
@@ -40,8 +40,8 @@ def _load_font(size: int):
 
 # ===========================
 # VIDEO GENERATOR
-# Uses template_HB1_wide.mp4 as background,
-# draws the name sliding in from the left and then staying centered.
+# Name comes from the RIGHT, one letter at a time,
+# and ends up on the RIGHT side between cake & screen edge.
 # ===========================
 def create_name_animation(name: str, output_path: str):
     # Smart capitalization: ALL CAPS stays, otherwise Title Case
@@ -65,45 +65,73 @@ def create_name_animation(name: str, output_path: str):
         format="ffmpeg",
     )
 
-    # Prepare font and measure full text
+    # Prepare font and measure FULL text once (for vertical centering)
     fontsize = _compute_fontsize(name)
     font = _load_font(fontsize)
 
     dummy = np.zeros((VIDEO_HEIGHT, VIDEO_WIDTH, 3), dtype=np.uint8)
     pimg = Image.fromarray(dummy)
     d = ImageDraw.Draw(pimg)
-    bbox = d.textbbox((0, 0), name, font=font)
-    text_w = bbox[2] - bbox[0]
-    text_h = bbox[3] - bbox[1]
+    full_bbox = d.textbbox((0, 0), name, font=font)
+    full_h = full_bbox[3] - full_bbox[1]
 
-    # Vertical center
-    y = (VIDEO_HEIGHT - text_h) // 2
+    # Vertical center of the text (stays fixed so it doesn't jump)
+    y = (VIDEO_HEIGHT - full_h) // 2
 
-    # Slide in over first 1.5s
+    # Horizontal behavior:
+    # - Text appears one letter at a time (typewriter)
+    # - While it is appearing, the whole block slides in from the RIGHT
+    # - Final position is on the RIGHT side of the screen
     slide_seconds = 1.5
-    slide_frames = int(slide_seconds * fps)
+    slide_frames = max(int(slide_seconds * fps), 1)
 
-    x_center = (VIDEO_WIDTH - text_w) // 2
-    x_start = -text_w  # fully off-screen to the left
+    # We anchor the RIGHT edge of the text near the screen's right side.
+    # Example: 96% of width (a little padding from the edge).
+    target_right = int(VIDEO_WIDTH * 0.96)
 
+    # We start completely off-screen to the right
+    # (we will animate this right edge position)
+    # We'll use the full text width for starting offset to ensure fully off-screen.
+    full_w = full_bbox[2] - full_bbox[0]
+    start_right = VIDEO_WIDTH + full_w
+
+    # Process each frame of the base video
     for i, frame in enumerate(reader):
         pil_frame = Image.fromarray(frame).convert("RGB")
 
-        # Ensure 1920x1080
+        # Make sure frame is 1920x1080
         if pil_frame.size != (VIDEO_WIDTH, VIDEO_HEIGHT):
             pil_frame = pil_frame.resize((VIDEO_WIDTH, VIDEO_HEIGHT))
 
         draw = ImageDraw.Draw(pil_frame)
 
-        # Compute x position
+        # Determine progress (0 to 1) during the slide-in phase
         if i < slide_frames:
-            progress = i / max(slide_frames - 1, 1)
-            x = int(x_start + (x_center - x_start) * progress)
+            progress = i / float(slide_frames - 1 if slide_frames > 1 else 1)
         else:
-            x = x_center
+            progress = 1.0
 
-        # Draw text
-        draw.text((x, y), name, font=font, fill=(255, 255, 255))
+        # Number of letters visible (typewriter effect)
+        total_letters = len(name)
+        letters_visible = max(1, int(progress * total_letters))
+        visible_text = name[:letters_visible]
+
+        # Measure the current visible substring
+        sub_bbox = d.textbbox((0, 0), visible_text, font=font)
+        sub_w = sub_bbox[2] - sub_bbox[0]
+        sub_h = sub_bbox[3] - sub_bbox[1]
+
+        # Vertical stays fixed based on full text
+        y_current = (VIDEO_HEIGHT - full_h) // 2
+
+        # Animate the RIGHT edge from off-screen to target_right
+        current_right = int(start_right + (target_right - start_right) * progress)
+
+        # Left X is right edge minus width of current substring
+        x_current = current_right - sub_w
+
+        # Draw the text
+        draw.text((x_current, y_current), visible_text, font=font, fill=(255, 255, 255))
 
         writer.append_data(np.array(pil_frame))
 
@@ -143,7 +171,7 @@ if mode == "update":
 
 # ===========================
 # PLAYER MODE: used by the Stick
-# Always loads generated_videos/video.mp4
+# Loads generated_videos/video.mp4 and plays it.
 # ===========================
 else:
     st.markdown(
@@ -158,5 +186,7 @@ else:
     if not os.path.exists(OUTPUT_PATH):
         st.write("Waiting for first greeting video...")
     else:
-        # This is what the stick sees: the current video, always.
+        # NOTE: st.video may require one manual "play" click in a browser,
+        # but once playing, it will loop. For the Android stick signage,
+        # this matches your original pattern of pointing the stick at this URL.
         st.video(OUTPUT_PATH)
