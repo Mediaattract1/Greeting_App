@@ -1,4 +1,8 @@
+streamlit
 moviepy
+numpy
+pillow
+proglog
 imageio
 imageio-ffmpeg
-numpy
+watchdog
