@@ -1,4 +1,5 @@
 import os
+import time
 import numpy as np
 import imageio
 from PIL import Image, ImageDraw, ImageFont
@@ -118,7 +119,6 @@ def create_name_animation(name: str, output_path: str):
 # ===========================
 params = st.query_params
 mode_val = params.get("mode", "player")
-# mode_val might be a list or a string depending on how Streamlit returns it
 if isinstance(mode_val, list):
     mode = (mode_val[0] or "player").lower()
 else:
@@ -154,6 +154,14 @@ if mode == "update":
 # PLAYER MODE (Android Stick)
 # ===========================
 else:
+    # Compute a cache-busting query string based on file modification time
+    if os.path.exists(STATIC_VIDEO_PATH):
+        ts = int(os.path.getmtime(STATIC_VIDEO_PATH))
+    else:
+        ts = int(time.time())  # fallback, though file should exist after first update
+
+    src_url = f"/static/current.mp4?ts={ts}"
+
     # Fullscreen-style player page
     st.markdown(
         """
@@ -166,9 +174,9 @@ else:
     )
 
     st.markdown(
-        """
+        f"""
         <video autoplay muted loop>
-            <source src="/static/current.mp4" type="video/mp4">
+            <source src="{src_url}" type="video/mp4">
         </video>
         """,
         unsafe_allow_html=True,
