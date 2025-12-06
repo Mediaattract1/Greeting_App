@@ -29,10 +29,9 @@ def _compute_fontsize(name: str) -> int:
     Tuned for 1920x1080.
     """
     name = name or ""
-    n_chars = max(len(name), 4)  # avoid tiny denominators
-    approx = int(1300 / n_chars)  # main knob: bigger -> larger text
+    n_chars = max(len(name), 4)
+    approx = int(1300 / n_chars)
 
-    # Clamp to a reasonable range
     return max(50, min(220, approx))
 
 
@@ -50,42 +49,7 @@ def create_name_animation(
     fade_in: float = 0.5,
     fade_out: float = 0.5,
 ) -> None:
-    """
-    Create a 1920x1080 MP4 where the given name appears one letter at a time.
 
-    If background_video_path is provided:
-        - That video (cake, animation, etc.) is resized to 1920x1080 and used as background.
-        - Typing happens in the first `type_fraction` of the video duration.
-
-    If background_video_path is None:
-        - A solid color background is used.
-        - Duration is: (typing time) + (hold_time).
-
-    Parameters
-    ----------
-    name : str
-        The name to display (can be multiple words).
-    output_path : str
-        Path of the output MP4 file.
-    background_video_path : str | None
-        Optional path to an existing MP4 used as background.
-    bg_color : tuple[int, int, int]
-        Background color when no background video is provided.
-    text_color : str
-        Color of the name text.
-    font : str
-        System font available in the Render container.
-    letter_interval : float | None
-        Seconds per letter. If None, computed automatically.
-    type_fraction : float
-        When using a background video, fraction of its duration used for typing.
-    hold_time : float | None
-        Extra time to hold the full name (no background video mode).
-    fade_in : float
-        Fade-in duration (seconds).
-    fade_out : float
-        Fade-out duration (seconds).
-    """
     name = (name or "").strip()
     if not name:
         name = "Friend"
@@ -93,7 +57,7 @@ def create_name_animation(
     n_chars = len(name)
     fontsize = _compute_fontsize(name)
 
-    # --------- Background clip ---------
+    # --------- Background ---------
     if background_video_path:
         bg = VideoFileClip(background_video_path).resize((VIDEO_WIDTH, VIDEO_HEIGHT))
         duration = bg.duration
@@ -105,14 +69,12 @@ def create_name_animation(
 
         bg_clip = bg
     else:
-        # Solid background mode
         if letter_interval is None:
-            # Target roughly 1.2–1.8 sec typing total
             letter_interval = max(0.05, min(0.18, 1.4 / max(n_chars, 1)))
 
         type_duration = n_chars * letter_interval
         if hold_time is None:
-            hold_time = 1.5  # seconds full name on screen
+            hold_time = 1.5
 
         duration = type_duration + hold_time
 
@@ -122,5 +84,121 @@ def create_name_animation(
             duration=duration,
         )
 
-    # --------- Precompute partial text clips ---------
-    partial_texts = [name[:i] for i in range]()_
+    # ✅ ✅ ✅ FIXED LINE — THIS WAS YOUR SYNTAX ERROR
+    partial_texts = [name[:i] for i in range(1, n_chars + 1)]
+
+    max_text_width = int(VIDEO_WIDTH * 0.8)
+    partial_clips = []
+
+    for txt in partial_texts:
+        tc = TextClip(
+            txt,
+            fontsize=fontsize,
+            color=text_color,
+            font=font,
+            method="caption",
+            size=(max_text_width, None),
+            align="center",
+        )
+        partial_clips.append(tc)
+
+    # --------- Frame Generator ---------
+    def make_frame(t: float):
+        frame = bg_clip.get_frame(t).copy()
+
+        if t <= 0:
+            index = 1
+        else:
+            index = int(t / letter_interval) + 1
+            index = max(1, min(index, n_chars))
+
+        text_clip = partial_clips[index - 1]
+        text_frame = text_clip.get_frame(0)
+        th, tw, _ = text_frame.shape
+
+        x = (VIDEO_WIDTH - tw) // 2
+        y = (VIDEO_HEIGHT - th) // 2
+
+        frame[y:y + th, x:x + tw, :] = text_frame
+        return frame
+
+    animated_clip = VideoClip(make_frame, duration=duration)
+
+    if fade_in > 0:
+        animated_clip = animated_clip.fx(vfx.fadein, fade_in)
+    if fade_out > 0:
+        animated_clip = animated_clip.fx(vfx.fadeout, fade_out)
+
+    animated_clip.write_videofile(
+        output_path,
+        fps=FPS,
+        codec="libx264",
+        audio=False,
+        preset="medium",
+        threads=4,
+    )
+
+
+# -----------------------
+# STREAMLIT APP
+# -----------------------
+def main():
+    st.title("Greeting Video Generator")
+
+    st.write(
+        "Enter a name and optionally upload a background MP4. "
+        "The video will be generated at 1920×1080 with a typewriter effect."
+    )
+
+    name = st.text_input("Name to display", value="Happy Birthday Mary")
+
+    bg_file = st.file_uploader(
+        "Optional background video (MP4)",
+        type=["mp4"],
+    )
+
+    col1, col2 = st.columns(2)
+    with col1:
+        fade_in = st.slider("Fade in (seconds)", 0.0, 2.0, 0.5, 0.1)
+    with col2:
+        fade_out = st.slider("Fade out (seconds)", 0.0, 2.0, 0.5, 0.1)
+
+    if st.button("Create Video"):
+        if not name.strip():
+            st.error("Please enter a name.")
+            return
+
+        with st.spinner("Generating video..."):
+            with tempfile.TemporaryDirectory() as tmpdir:
+                bg_path = None
+                if bg_file is not None:
+                    bg_path = os.path.join(tmpdir, "background.mp4")
+                    with open(bg_path, "wb") as f:
+                        f.write(bg_file.read())
+
+                output_path = os.path.join(tmpdir, "name_greeting.mp4")
+
+                create_name_animation(
+                    name=name,
+                    output_path=output_path,
+                    background_video_path=bg_path,
+                    fade_in=fade_in,
+                    fade_out=fade_out,
+                )
+
+                with open(output_path, "rb") as f:
+                    video_bytes = f.read()
+
+        st.success("Video created successfully!")
+        st.video(video_bytes)
+
+        st.download_button(
+            "Download MP4",
+            data=video_bytes,
+            file_name="name_greeting.mp4",
+            mime="video/mp4",
+        )
+
+
+if __name__ == "__main__":
+    main()
