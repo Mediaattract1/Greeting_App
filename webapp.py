@@ -14,6 +14,9 @@ STATIC_VIDEO_PATH = "static/current.mp4"
 
 os.makedirs("static", exist_ok=True)
 
+# Set layout once, at top (no warnings)
+st.set_page_config(layout="wide")
+
 # ===========================
 # FONT HELPERS
 # ===========================
@@ -24,6 +27,7 @@ def _compute_fontsize(name: str) -> int:
 
 
 def _load_font(size: int):
+    # Try a few common fonts; fall back to default
     for f in ["DejaVuSans-Bold.ttf", "DejaVuSans.ttf", "Arial.ttf"]:
         try:
             return ImageFont.truetype(f, size)
@@ -36,15 +40,22 @@ def _load_font(size: int):
 # VIDEO GENERATOR
 # ===========================
 def create_name_animation(name: str, output_path: str):
-    name = name.strip() if name.strip() else "Friend"
+    # Smart capitalization:
+    # - If ALL CAPS, keep it
+    # - Otherwise, Title Case
+    raw_name = (name or "").strip() or "Friend"
+    if raw_name.isupper():
+        name = raw_name
+    else:
+        name = raw_name.title()
 
     fontsize = _compute_fontsize(name)
     font = _load_font(fontsize)
 
-    # Locked defaults
-    letter_interval = 0.12
-    hold_time = 1.6
-    fade_time = 0.5
+    # Locked defaults for timing
+    letter_interval = 0.12   # seconds per letter
+    hold_time = 1.6          # seconds holding full name
+    fade_time = 0.5          # seconds fade in/out
 
     type_time = len(name) * letter_interval
     total_time = type_time + hold_time
@@ -67,7 +78,6 @@ def create_name_animation(name: str, output_path: str):
         img = Image.new("RGB", (VIDEO_WIDTH, VIDEO_HEIGHT), (0, 0, 0))
         draw = ImageDraw.Draw(img)
 
-        # Use textbbox instead of deprecated textsize
         if text:
             bbox = draw.textbbox((0, 0), text, font=font)
             w = bbox[2] - bbox[0]
@@ -124,7 +134,7 @@ if mode == "update":
 # PLAYER MODE (Android Stick)
 # ===========================
 else:
-    st.set_page_config(layout="wide")
+    # Fullscreen-style player page
     st.markdown(
         """
         <style>
