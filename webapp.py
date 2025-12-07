@@ -210,7 +210,7 @@ if mode == "update":
             st.session_state.status = "idle"
             st.rerun()
 
-# === DISPLAY MODE (FADE-IN BEFORE PLAY + FADE-OUT BETWEEN REPLAYS) ===
+# === DISPLAY MODE (10 SECOND LOOP WITH FADE-IN + FADE-OUT) ===
 else:
     TARGET_FILE = "video.mp4"
     real_target = os.path.join(OUTPUT_FOLDER, TARGET_FILE)
@@ -239,13 +239,8 @@ else:
                 transition: opacity 0.3s ease-in-out;
             }}
 
-            body.fade-in {{
-                opacity: 1;
-            }}
-
-            body.fade-out {{
-                opacity: 0;
-            }}
+            body.fade-in {{ opacity: 1; }}
+            body.fade-out {{ opacity: 0; }}
 
             .video-wrapper {{
                 position: fixed;
@@ -274,21 +269,19 @@ else:
             <script>
                 const video = document.getElementById("hbVideo");
 
-                // When the video is ready to play, do a tiny fade-in from black
                 video.addEventListener("canplay", function() {{
                     document.body.classList.add("fade-in");
                 }});
 
-                // After 5 seconds, fade out, then reload the whole page
+                // 🔁 NOW RUNS FOR 10 SECONDS
                 setTimeout(function() {{
                     document.body.classList.remove("fade-in");
                     document.body.classList.add("fade-out");
 
                     setTimeout(function() {{
-                        // Reload the TOP-LEVEL page (like manual refresh)
                         window.parent.location.reload(true);
-                    }}, 600);  // keep this slightly longer than fade-out if you like
-                }}, 5000);
+                    }}, 600);
+                }}, 10000);   // ✅ 10 seconds
             </script>
         </body>
         </html>
