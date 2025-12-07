@@ -210,7 +210,7 @@ if mode == "update":
             st.session_state.status = "idle"
             st.rerun()
 
-# === DISPLAY MODE (10 SECOND LOOP WITH FADE-IN + FADE-OUT) ===
+# === DISPLAY MODE (3-LOOP / 30s CYCLE WITH FADE-IN + FADE-OUT) ===
 else:
     TARGET_FILE = "video.mp4"
     real_target = os.path.join(OUTPUT_FOLDER, TARGET_FILE)
@@ -273,7 +273,7 @@ else:
                     document.body.classList.add("fade-in");
                 }});
 
-                // 🔁 NOW RUNS FOR 10 SECONDS
+                // ✅ 3 LOOPS = 30 SECONDS
                 setTimeout(function() {{
                     document.body.classList.remove("fade-in");
                     document.body.classList.add("fade-out");
@@ -281,7 +281,7 @@ else:
                     setTimeout(function() {{
                         window.parent.location.reload(true);
                     }}, 600);
-                }}, 10000);   // ✅ 10 seconds
+                }}, 30000);
             </script>
         </body>
         </html>
