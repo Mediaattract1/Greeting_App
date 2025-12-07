@@ -45,13 +45,15 @@ def safe_resize(clip, size):
         return clip.resize(newsize=size)
 
 def get_ad_file():
+    # Kept for future use, but currently unused (ad playback disabled)
     for ext in ['.mp4', '.mov', '.gif', '.png', '.jpg']:
         if os.path.exists("ad" + ext):
             return "ad" + ext
     return None
 
 def create_full_name_image(text, video_h, filename):
-    font_size = int(video_h * 0.12)
+    # 🔹 FONT SIZE INCREASED (was 0.12, now 0.16)
+    font_size = int(video_h * 0.16)
     try:
         font = ImageFont.truetype("arialbd.ttf", font_size)
     except:
@@ -161,25 +163,27 @@ if mode == "update":
             except:
                 pass
 
+            # Base birthday video with name overlay
             final = CompositeVideoClip([clip, txt_clip])
 
-            ad = get_ad_file()
-            if ad:
-                try:
-                    if ad.endswith(('.mp4', '.mov')):
-                        ac = VideoFileClip(ad)
-                    else:
-                        ac = ImageClip(ad).with_duration(15)
-
-                    try:
-                        ac = ac.resized(new_size=clip.size)
-                    except:
-                        ac = ac.resize(newsize=clip.size)
-
-                    ac = ac.with_start(final.duration)
-                    final = CompositeVideoClip([final, ac])
-                except:
-                    pass
+            # 🔹 ad.mp4 / ad.png DISABLED FOR NOW
+            # ad = get_ad_file()
+            # if ad:
+            #     try:
+            #         if ad.endswith(('.mp4', '.mov')):
+            #             ac = VideoFileClip(ad)
+            #         else:
+            #             ac = ImageClip(ad).with_duration(15)
+            #
+            #         try:
+            #             ac = ac.resized(new_size=clip.size)
+            #         except:
+            #             ac = ac.resize(newsize=clip.size)
+            #
+            #         ac = ac.with_start(final.duration)
+            #         final = CompositeVideoClip([final, ac])
+            #     except:
+            #         pass
 
             prog.progress(60)
             final.write_videofile(temp_out, codec='libx264', audio_codec='aac', fps=24, logger=None)
@@ -269,11 +273,12 @@ else:
             <script>
                 const video = document.getElementById("hbVideo");
 
+                // Fade in as soon as the video can play
                 video.addEventListener("canplay", function() {{
                     document.body.classList.add("fade-in");
                 }});
 
-                // ✅ 3 LOOPS = 30 SECONDS
+                // 3 loops ≈ 30 seconds for a 10s template
                 setTimeout(function() {{
                     document.body.classList.remove("fade-in");
                     document.body.classList.add("fade-out");
