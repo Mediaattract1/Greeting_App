@@ -52,7 +52,7 @@ def get_ad_file():
     return None
 
 def create_full_name_image(text, video_h, filename):
-    # 🔹 FONT SIZE INCREASED (was 0.12, now 0.16)
+    # FONT SIZE INCREASED (was 0.12, now 0.16)
     font_size = int(video_h * 0.16)
     try:
         font = ImageFont.truetype("arialbd.ttf", font_size)
@@ -214,13 +214,15 @@ if mode == "update":
             st.session_state.status = "idle"
             st.rerun()
 
-# === DISPLAY MODE (3-LOOP / 30s CYCLE WITH FADE-IN + FADE-OUT) ===
+# === DISPLAY MODE (CLIENT-SIDE LOOPING + 30s REFRESH) ===
 else:
     TARGET_FILE = "video.mp4"
     real_target = os.path.join(OUTPUT_FOLDER, TARGET_FILE)
 
     if os.path.exists(real_target):
-        video_bytes = open(real_target, 'rb').read()
+        # Read video once and embed as base64 for the <video> source
+        with open(real_target, 'rb') as f:
+            video_bytes = f.read()
         video_b64 = base64.b64encode(video_bytes).decode()
 
         html_code = f"""
@@ -250,9 +252,17 @@ else:
                 position: fixed;
                 inset: 0;
                 display: flex;
+                flex-direction: column;
                 align-items: center;
                 justify-content: center;
                 background-color: black;
+                color: white;
+                font-family: Arial, sans-serif;
+            }}
+
+            .label {{
+                margin-bottom: 10px;
+                font-size: 18px;
             }}
 
             video {{
@@ -260,11 +270,13 @@ else:
                 height: 100vh;
                 object-fit: contain;
                 pointer-events: none;
+                background-color: black;
             }}
         </style>
         </head>
         <body id="body">
             <div class="video-wrapper">
+                <div class="label">Video is below ⬇️</div>
                 <video id="hbVideo" autoplay loop muted playsinline>
                     <source src="data:video/mp4;base64,{video_b64}" type="video/mp4">
                 </video>
@@ -273,12 +285,23 @@ else:
             <script>
                 const video = document.getElementById("hbVideo");
 
-                // Fade in as soon as the video can play
+                function tryPlay() {{
+                    const p = video.play();
+                    if (p && p.catch) {{
+                        p.catch(err => {{
+                            console.log('Autoplay may be blocked:', err);
+                        }});
+                    }}
+                }}
+
+                // Try to play as soon as possible
+                window.addEventListener("load", tryPlay);
                 video.addEventListener("canplay", function() {{
                     document.body.classList.add("fade-in");
+                    tryPlay();
                 }});
 
-                // 3 loops ≈ 30 seconds for a 10s template
+                // Let it loop on the client, but still refresh every 30s to check for new video
                 setTimeout(function() {{
                     document.body.classList.remove("fade-in");
                     document.body.classList.add("fade-out");
@@ -296,8 +319,10 @@ else:
         if "last_version" not in st.session_state:
             st.session_state.last_version = current_stats
 
+        # Embed the HTML (video tag with loop) in Streamlit
         st.components.v1.html(html_code, height=600, scrolling=False)
 
+        # If the file changes (new greeting generated), rerun app so display updates on next reload
         if current_stats > st.session_state.last_version:
             st.session_state.last_version = current_stats
             st.rerun()
