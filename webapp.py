@@ -45,15 +45,13 @@ def safe_resize(clip, size):
         return clip.resize(newsize=size)
 
 def get_ad_file():
-    # Kept for future use, but currently unused (ad playback disabled)
     for ext in ['.mp4', '.mov', '.gif', '.png', '.jpg']:
         if os.path.exists("ad" + ext):
             return "ad" + ext
     return None
 
 def create_full_name_image(text, video_h, filename):
-    # FONT SIZE INCREASED (was 0.12, now 0.16)
-    font_size = int(video_h * 0.16)
+    font_size = int(video_h * 0.12)
     try:
         font = ImageFont.truetype("arialbd.ttf", font_size)
     except:
@@ -163,27 +161,25 @@ if mode == "update":
             except:
                 pass
 
-            # Base birthday video with name overlay
             final = CompositeVideoClip([clip, txt_clip])
 
-            # 🔹 ad.mp4 / ad.png DISABLED FOR NOW
-            # ad = get_ad_file()
-            # if ad:
-            #     try:
-            #         if ad.endswith(('.mp4', '.mov')):
-            #             ac = VideoFileClip(ad)
-            #         else:
-            #             ac = ImageClip(ad).with_duration(15)
-            #
-            #         try:
-            #             ac = ac.resized(new_size=clip.size)
-            #         except:
-            #             ac = ac.resize(newsize=clip.size)
-            #
-            #         ac = ac.with_start(final.duration)
-            #         final = CompositeVideoClip([final, ac])
-            #     except:
-            #         pass
+            ad = get_ad_file()
+            if ad:
+                try:
+                    if ad.endswith(('.mp4', '.mov')):
+                        ac = VideoFileClip(ad)
+                    else:
+                        ac = ImageClip(ad).with_duration(15)
+
+                    try:
+                        ac = ac.resized(new_size=clip.size)
+                    except:
+                        ac = ac.resize(newsize=clip.size)
+
+                    ac = ac.with_start(final.duration)
+                    final = CompositeVideoClip([final, ac])
+                except:
+                    pass
 
             prog.progress(60)
             final.write_videofile(temp_out, codec='libx264', audio_codec='aac', fps=24, logger=None)
@@ -214,15 +210,13 @@ if mode == "update":
             st.session_state.status = "idle"
             st.rerun()
 
-# === DISPLAY MODE (CLIENT-SIDE LOOPING + 30s REFRESH) ===
+# === DISPLAY MODE (WITH FADE + AUTO-REFRESH MAIN PAGE) ===
 else:
     TARGET_FILE = "video.mp4"
     real_target = os.path.join(OUTPUT_FOLDER, TARGET_FILE)
 
     if os.path.exists(real_target):
-        # Read video once and embed as base64 for the <video> source
-        with open(real_target, 'rb') as f:
-            video_bytes = f.read()
+        video_bytes = open(real_target, 'rb').read()
         video_b64 = base64.b64encode(video_bytes).decode()
 
         html_code = f"""
@@ -238,31 +232,20 @@ else:
                 height: 100vh;
                 background-color: black;
                 overflow: hidden;
+                transition: opacity 0.9s ease-in-out;
             }}
 
-            body {{
+            body.fade-out {{
                 opacity: 0;
-                transition: opacity 0.3s ease-in-out;
             }}
-
-            body.fade-in {{ opacity: 1; }}
-            body.fade-out {{ opacity: 0; }}
 
             .video-wrapper {{
                 position: fixed;
                 inset: 0;
                 display: flex;
-                flex-direction: column;
                 align-items: center;
                 justify-content: center;
                 background-color: black;
-                color: white;
-                font-family: Arial, sans-serif;
-            }}
-
-            .label {{
-                margin-bottom: 10px;
-                font-size: 18px;
             }}
 
             video {{
@@ -270,46 +253,25 @@ else:
                 height: 100vh;
                 object-fit: contain;
                 pointer-events: none;
-                background-color: black;
             }}
         </style>
         </head>
         <body id="body">
             <div class="video-wrapper">
-                <div class="label">Video is below ⬇️</div>
-                <video id="hbVideo" autoplay loop muted playsinline>
+                <video autoplay loop muted playsinline>
                     <source src="data:video/mp4;base64,{video_b64}" type="video/mp4">
                 </video>
             </div>
 
             <script>
-                const video = document.getElementById("hbVideo");
-
-                function tryPlay() {{
-                    const p = video.play();
-                    if (p && p.catch) {{
-                        p.catch(err => {{
-                            console.log('Autoplay may be blocked:', err);
-                        }});
-                    }}
-                }}
-
-                // Try to play as soon as possible
-                window.addEventListener("load", tryPlay);
-                video.addEventListener("canplay", function() {{
-                    document.body.classList.add("fade-in");
-                    tryPlay();
-                }});
-
-                // Let it loop on the client, but still refresh every 30s to check for new video
                 setTimeout(function() {{
-                    document.body.classList.remove("fade-in");
                     document.body.classList.add("fade-out");
 
                     setTimeout(function() {{
+                        // Reload the TOP-LEVEL page (like manual refresh)
                         window.parent.location.reload(true);
-                    }}, 600);
-                }}, 30000);
+                    }}, 900);
+                }}, 5000);
             </script>
         </body>
         </html>
@@ -319,10 +281,8 @@ else:
         if "last_version" not in st.session_state:
             st.session_state.last_version = current_stats
 
-        # Embed the HTML (video tag with loop) in Streamlit
         st.components.v1.html(html_code, height=600, scrolling=False)
 
-        # If the file changes (new greeting generated), rerun app so display updates on next reload
         if current_stats > st.session_state.last_version:
             st.session_state.last_version = current_stats
             st.rerun()
