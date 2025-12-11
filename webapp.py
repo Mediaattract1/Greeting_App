@@ -9,7 +9,7 @@ import gc
 import base64
 
 # --- CONFIGURATION ---
-BASE_URL = "https://greeting-app-wh2w.onrender.com"  # kept for reference, not used in JS now
+BASE_URL = "https://greeting-app-wh2w.onrender.com"  # kept for reference, not used directly by JS
 TEMPLATE_FILE = "template_HB1_wide.mp4"
 OUTPUT_FOLDER = "generated_videos"
 TARGET_RES = (1920, 1080)
@@ -25,11 +25,11 @@ try:
     try:
         from moviepy.video.fx import FadeOut
     except ImportError:
-            try:
-                import moviepy.video.fx.all as vfx
-                FadeOut = vfx.FadeOut
-            except:
-                FadeOut = None
+        try:
+            import moviepy.video.fx.all as vfx
+            FadeOut = vfx.FadeOut
+        except:
+            FadeOut = None
 except ImportError:
     import moviepy.editor as mp
     VideoFileClip = mp.VideoFileClip
@@ -232,7 +232,7 @@ else:
             video_bytes = f.read()
         video_b64 = base64.b64encode(video_bytes).decode()
 
-        # Relative version endpoint; JS will add a cache-buster
+        # (Not used directly now, but kept for clarity)
         version_url = "?mode=version"
 
         html_code = f"""
@@ -265,12 +265,24 @@ else:
 
             <script>
                 const initialVersion = {current_version};
-                const baseVersionUrl = "{version_url}";
+
+                function buildVersionUrl() {{
+                    try {{
+                        // Use parent origin so we hit the real app root, not the iframe URL
+                        const origin = (window.parent && window.parent.location)
+                            ? window.parent.location.origin
+                            : window.location.origin;
+                        // Always point to root with ?mode=version and add cache-buster
+                        return origin + "/?mode=version&_ts=" + Date.now();
+                    }} catch (e) {{
+                        // Fallback: relative to current origin
+                        return "/?mode=version&_ts=" + Date.now();
+                    }}
+                }}
 
                 async function checkVersion() {{
                     try {{
-                        // Add cache-buster so we never get a stale response
-                        const url = baseVersionUrl + "&_ts=" + Date.now();
+                        const url = buildVersionUrl();
                         const resp = await fetch(url, {{ cache: "no-store" }});
                         const data = await resp.json();
                         if (data.version && data.version > initialVersion) {{
