@@ -37,6 +37,31 @@ except ImportError:
     ImageClip = mp.ImageClip
     FadeOut = None
 
+# --- NAME NORMALIZATION (Capitalization Helper) ---
+def normalize_name(name: str) -> str:
+    """
+    Fixes capitalization for:
+    - Multi-word names
+    - Hyphenated names (Anna-Maria)
+    - Apostrophes (O'Connor)
+    """
+    name = name.strip()
+
+    def fix_word(w: str) -> str:
+        # Handle O'Connor / D'Angelo
+        if "'" in w:
+            parts = w.split("'")
+            return "'".join(p.capitalize() for p in parts if p)
+
+        # Handle Anna-Maria / Jean-Paul
+        if "-" in w:
+            parts = w.split("-")
+            return "-".join(p.capitalize() for p in parts if p)
+
+        return w.capitalize()
+
+    return " ".join(fix_word(w) for w in name.split() if w)
+
 # --- HELPERS ---
 def safe_resize(clip, size):
     try:
@@ -122,7 +147,10 @@ if mode == "update":
         prog = st.progress(0)
 
         try:
-            full_text = st.session_state.name_input + "!"
+            # ✅ Normalize the name for display & rendering
+            normalized = normalize_name(st.session_state.name_input)
+            full_text = normalized + "!"
+
             TARGET_FILE = "video.mp4"
             temp_out = "temp_render.mp4"
             temp_img = "temp_text_overlay.png"
@@ -173,6 +201,8 @@ if mode == "update":
                 os.remove(temp_img)
 
             prog.progress(100)
+            # Save normalized name for the success message
+            st.session_state.display_name = normalized
             st.session_state.status = "done"
             st.rerun()
 
@@ -184,7 +214,8 @@ if mode == "update":
 
     elif st.session_state.status == "done":
         st.balloons()
-        st.success(f"Success! Your Greeting for **{st.session_state.get('name_input', '')}** is playing on the Screen.")
+        display_name = st.session_state.get("display_name", st.session_state.get("name_input", ""))
+        st.success(f"Success! Your Greeting for **{display_name}** is playing on the Screen.")
         if st.button("Create New Greeting"):
             st.session_state.status = "idle"
             st.rerun()
