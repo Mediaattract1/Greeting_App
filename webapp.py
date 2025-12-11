@@ -9,7 +9,7 @@ import gc
 import base64
 
 # --- CONFIGURATION ---
-BASE_URL = "https://greeting-app-wh2w.onrender.com"
+BASE_URL = "https://greeting-app-wh2w.onrender.com"  # kept for reference, not used in JS anymore
 TEMPLATE_FILE = "template_HB1_wide.mp4"
 OUTPUT_FOLDER = "generated_videos"
 TARGET_RES = (1920, 1080)
@@ -147,7 +147,7 @@ if mode == "update":
         prog = st.progress(0)
 
         try:
-            # ✅ Normalize the name for display & rendering
+            # Normalize the name for display & rendering
             normalized = normalize_name(st.session_state.name_input)
             full_text = normalized + "!"
 
@@ -232,7 +232,8 @@ else:
             video_bytes = f.read()
         video_b64 = base64.b64encode(video_bytes).decode()
 
-        version_url = f"{BASE_URL}?mode=version"
+        # 🔑 Use a relative URL so it works on any domain/path
+        version_url = "?mode=version"
 
         html_code = f"""
         <!DOCTYPE html>
