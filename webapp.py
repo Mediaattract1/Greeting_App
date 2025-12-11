@@ -45,14 +45,12 @@ def safe_resize(clip, size):
         return clip.resize(newsize=size)
 
 def get_ad_file():
-    # Kept for future use, but currently unused (ad playback disabled)
     for ext in ['.mp4', '.mov', '.gif', '.png', '.jpg']:
         if os.path.exists("ad" + ext):
             return "ad" + ext
     return None
 
 def create_full_name_image(text, video_h, filename):
-    # 🔹 FONT SIZE INCREASED (was 0.12, now 0.16)
     font_size = int(video_h * 0.16)
     try:
         font = ImageFont.truetype("arialbd.ttf", font_size)
@@ -163,27 +161,7 @@ if mode == "update":
             except:
                 pass
 
-            # Base birthday video with name overlay
             final = CompositeVideoClip([clip, txt_clip])
-
-            # 🔹 ad.mp4 / ad.png DISABLED FOR NOW
-            # ad = get_ad_file()
-            # if ad:
-            #     try:
-            #         if ad.endswith(('.mp4', '.mov')):
-            #             ac = VideoFileClip(ad)
-            #         else:
-            #             ac = ImageClip(ad).with_duration(15)
-            #
-            #         try:
-            #             ac = ac.resized(new_size=clip.size)
-            #         except:
-            #             ac = ac.resize(newsize=clip.size)
-            #
-            #         ac = ac.with_start(final.duration)
-            #         final = CompositeVideoClip([final, ac])
-            #     except:
-            #         pass
 
             prog.progress(60)
             final.write_videofile(temp_out, codec='libx264', audio_codec='aac', fps=24, logger=None)
@@ -214,7 +192,7 @@ if mode == "update":
             st.session_state.status = "idle"
             st.rerun()
 
-# === DISPLAY MODE (3-LOOP / 30s CYCLE WITH FADE-IN + FADE-OUT) ===
+# === DISPLAY MODE (ZERO DOWNTIME RELOAD) ===
 else:
     TARGET_FILE = "video.mp4"
     real_target = os.path.join(OUTPUT_FOLDER, TARGET_FILE)
@@ -227,7 +205,7 @@ else:
         <!DOCTYPE html>
         <html>
         <head>
-        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <style>
             html, body {{
                 margin: 0;
@@ -237,14 +215,6 @@ else:
                 background-color: black;
                 overflow: hidden;
             }}
-
-            body {{
-                opacity: 0;
-                transition: opacity 0.2s ease-in-out;  /* CHANGED: was 0.3s */
-            }}
-
-            body.fade-in {{ opacity: 1; }}
-            body.fade-out {{ opacity: 0; }}
 
             .video-wrapper {{
                 position: fixed;
@@ -263,7 +233,7 @@ else:
             }}
         </style>
         </head>
-        <body id="body">
+        <body>
             <div class="video-wrapper">
                 <video id="hbVideo" autoplay loop muted playsinline>
                     <source src="data:video/mp4;base64,{video_b64}" type="video/mp4">
@@ -271,21 +241,9 @@ else:
             </div>
 
             <script>
-                const video = document.getElementById("hbVideo");
-
-                // Fade in as soon as the video can play
-                video.addEventListener("canplay", function() {{
-                    document.body.classList.add("fade-in");
-                }});
-
-                // 3 loops ≈ 30 seconds for a 10s template
+                // ✅ ZERO artificial delay — reload instantly at 30s
                 setTimeout(function() {{
-                    document.body.classList.remove("fade-in");
-                    document.body.classList.add("fade-out");
-
-                    setTimeout(function() {{
-                        window.parent.location.reload(true);
-                    }}, 200);  // CHANGED: was 600
+                    window.parent.location.reload(true);
                 }}, 30000);
             </script>
         </body>
