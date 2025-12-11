@@ -9,7 +9,7 @@ import gc
 import base64
 
 # --- CONFIGURATION ---
-BASE_URL = "https://greeting-app-wh2w.onrender.com"  # kept for reference, not used in JS anymore
+BASE_URL = "https://greeting-app-wh2w.onrender.com"  # kept for reference, not used in JS now
 TEMPLATE_FILE = "template_HB1_wide.mp4"
 OUTPUT_FOLDER = "generated_videos"
 TARGET_RES = (1920, 1080)
@@ -25,11 +25,11 @@ try:
     try:
         from moviepy.video.fx import FadeOut
     except ImportError:
-        try:
-            import moviepy.video.fx.all as vfx
-            FadeOut = vfx.FadeOut
-        except:
-            FadeOut = None
+            try:
+                import moviepy.video.fx.all as vfx
+                FadeOut = vfx.FadeOut
+            except:
+                FadeOut = None
 except ImportError:
     import moviepy.editor as mp
     VideoFileClip = mp.VideoFileClip
@@ -232,7 +232,7 @@ else:
             video_bytes = f.read()
         video_b64 = base64.b64encode(video_bytes).decode()
 
-        # 🔑 Use a relative URL so it works on any domain/path
+        # Relative version endpoint; JS will add a cache-buster
         version_url = "?mode=version"
 
         html_code = f"""
@@ -265,11 +265,13 @@ else:
 
             <script>
                 const initialVersion = {current_version};
-                const versionUrl = "{version_url}";
+                const baseVersionUrl = "{version_url}";
 
                 async function checkVersion() {{
                     try {{
-                        const resp = await fetch(versionUrl, {{ cache: "no-store" }});
+                        // Add cache-buster so we never get a stale response
+                        const url = baseVersionUrl + "&_ts=" + Date.now();
+                        const resp = await fetch(url, {{ cache: "no-store" }});
                         const data = await resp.json();
                         if (data.version && data.version > initialVersion) {{
                             window.location.reload(true);
@@ -279,6 +281,7 @@ else:
                     }}
                 }}
 
+                // Check every 4 seconds
                 setInterval(checkVersion, 4000);
             </script>
         </body>
