@@ -240,7 +240,7 @@ else:
 
             body {{
                 opacity: 0;
-                transition: opacity 0.3s ease-in-out;
+                transition: opacity 0.2s ease-in-out;  /* CHANGED: was 0.3s */
             }}
 
             body.fade-in {{ opacity: 1; }}
@@ -285,7 +285,7 @@ else:
 
                     setTimeout(function() {{
                         window.parent.location.reload(true);
-                    }}, 600);
+                    }}, 200);  // CHANGED: was 600
                 }}, 30000);
             </script>
         </body>
