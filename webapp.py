@@ -45,12 +45,14 @@ def safe_resize(clip, size):
         return clip.resize(newsize=size)
 
 def get_ad_file():
+    # Kept for future use, but currently unused (ad playback disabled)
     for ext in ['.mp4', '.mov', '.gif', '.png', '.jpg']:
         if os.path.exists("ad" + ext):
             return "ad" + ext
     return None
 
 def create_full_name_image(text, video_h, filename):
+    # FONT SIZE INCREASED (was 0.12, now 0.16)
     font_size = int(video_h * 0.16)
     try:
         font = ImageFont.truetype("arialbd.ttf", font_size)
@@ -86,6 +88,18 @@ st.set_page_config(page_title="Sign Manager", layout="wide", initial_sidebar_sta
 query_params = st.query_params
 mode = query_params.get("mode", "display")
 
+# === VERSION MODE (LIGHTWEIGHT API FOR JS) ===
+if mode == "version":
+    TARGET_FILE = "video.mp4"
+    real_target = os.path.join(OUTPUT_FOLDER, TARGET_FILE)
+    if os.path.exists(real_target):
+        version = os.stat(real_target).st_mtime
+    else:
+        version = 0
+    st.json({"version": version})
+    st.stop()
+
+# === SHARED STYLING (for update/display modes) ===
 st.markdown("""
     <style>
     #MainMenu, footer, header, [data-testid="stToolbar"] {display: none !important;}
@@ -161,6 +175,7 @@ if mode == "update":
             except:
                 pass
 
+            # Base birthday video with name overlay
             final = CompositeVideoClip([clip, txt_clip])
 
             prog.progress(60)
@@ -186,20 +201,29 @@ if mode == "update":
 
     elif st.session_state.status == "done":
         st.balloons()
-        st.success(f"Success! Your Greeting for **{st.session_state.name_input}** is playing on the Screen.")
+        st.success(f"Success! Your Greeting for **{}** is playing on the Screen.".format(
+            st.session_state.get("name_input", "")
+        ))
         st.write("")
         if st.button("Create New Greeting"):
             st.session_state.status = "idle"
             st.rerun()
 
-# === DISPLAY MODE (ZERO DOWNTIME RELOAD) ===
+# === DISPLAY MODE (INFINITE LOOP + VERSION POLLING) ===
 else:
     TARGET_FILE = "video.mp4"
     real_target = os.path.join(OUTPUT_FOLDER, TARGET_FILE)
 
     if os.path.exists(real_target):
-        video_bytes = open(real_target, 'rb').read()
+        # Get current version (mtime) for this render
+        current_version = os.stat(real_target).st_mtime
+
+        with open(real_target, 'rb') as f:
+            video_bytes = f.read()
         video_b64 = base64.b64encode(video_bytes).decode()
+
+        # Version check URL (same app, mode=version)
+        version_url = f"{BASE_URL}?mode=version"
 
         html_code = f"""
         <!DOCTYPE html>
@@ -220,9 +244,17 @@ else:
                 position: fixed;
                 inset: 0;
                 display: flex;
+                flex-direction: column;
                 align-items: center;
                 justify-content: center;
                 background-color: black;
+                color: white;
+                font-family: Arial, sans-serif;
+            }}
+
+            .label {{
+                margin-bottom: 10px;
+                font-size: 16px;
             }}
 
             video {{
@@ -230,35 +262,46 @@ else:
                 height: 100vh;
                 object-fit: contain;
                 pointer-events: none;
+                background-color: black;
             }}
         </style>
         </head>
         <body>
             <div class="video-wrapper">
+                <div class="label">Video is below ⬇️</div>
                 <video id="hbVideo" autoplay loop muted playsinline>
                     <source src="data:video/mp4;base64,{video_b64}" type="video/mp4">
                 </video>
             </div>
 
             <script>
-                // ✅ ZERO artificial delay — reload instantly at 30s
-                setTimeout(function() {{
-                    window.parent.location.reload(true);
-                }}, 30000);
+                const initialVersion = {current_version};
+                const versionUrl = "{version_url}";
+
+                // Keep video looping locally; only reload page when version changes
+                async function checkVersion() {{
+                    try {{
+                        const resp = await fetch(versionUrl, {{ cache: "no-store" }});
+                        if (!resp.ok) return;
+                        const data = await resp.json();
+                        if (data.version && data.version > initialVersion) {{
+                            // New video detected – reload to pull fresh base64
+                            window.location.reload(true);
+                        }}
+                    }} catch (e) {{
+                        console.log("Version check failed:", e);
+                    }}
+                }}
+
+                // Poll every 5 seconds for new version
+                setInterval(checkVersion, 5000);
             </script>
         </body>
         </html>
         """
 
-        current_stats = os.stat(real_target).st_mtime
-        if "last_version" not in st.session_state:
-            st.session_state.last_version = current_stats
-
+        # Render the HTML wrapper in Streamlit
         st.components.v1.html(html_code, height=600, scrolling=False)
-
-        if current_stats > st.session_state.last_version:
-            st.session_state.last_version = current_stats
-            st.rerun()
 
     else:
         st.info("Waiting for first update...")
