@@ -14,7 +14,8 @@ OUTPUT_FOLDER = "generated_videos"
 TARGET_RES = (1920, 1080)
 
 # How often the display page should refresh (seconds)
-DISPLAY_REFRESH_SECONDS = 10
+# Restaurant owners won't change screens often, so 3 minutes is fine.
+DISPLAY_REFRESH_SECONDS = 180  # was 10
 
 # --- SAFE SETUP ---
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
