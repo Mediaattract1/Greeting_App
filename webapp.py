@@ -248,7 +248,7 @@ if mode == "update":
             st.session_state.status = "idle"
             st.rerun()
 
-# === DISPLAY MODE (COMPONENT HTML + JS RELOAD) ===
+# === DISPLAY MODE (COMPONENT HTML + PARENT PAGE RELOAD) ===
 else:
     TARGET_FILE = "video.mp4"
     real_target = os.path.join(OUTPUT_FOLDER, TARGET_FILE)
@@ -288,10 +288,15 @@ else:
             </video>
 
             <script>
-                // Reload the page every DISPLAY_REFRESH_SECONDS so new videos are picked up
+                // Reload the *parent* Streamlit page every DISPLAY_REFRESH_SECONDS
+                // so Python reruns and embeds any new video file.
                 const RELOAD_MS = {DISPLAY_REFRESH_SECONDS * 1000};
                 setTimeout(function() {{
-                    window.location.reload(true);
+                    if (window.parent && window.parent !== window) {{
+                        window.parent.location.reload(true);
+                    }} else {{
+                        window.location.reload(true);
+                    }}
                 }}, RELOAD_MS);
             </script>
         </body>
@@ -305,11 +310,14 @@ else:
             "<h2 style='text-align:center; color:white;'>Waiting for first update...</h2>",
             unsafe_allow_html=True,
         )
-        # Try again every 5 seconds until the first video exists
         wait_html = """
         <script>
         setTimeout(function() {
-            window.location.reload(true);
+            if (window.parent && window.parent !== window) {
+                window.parent.location.reload(true);
+            } else {
+                window.location.reload(true);
+            }
         }, 5000);
         </script>
         """
