@@ -138,7 +138,11 @@ st.markdown("""
     ::-webkit-scrollbar {display: none;}
     body, .stApp {background-color: black;}
     p, label, h1, h2, h3 {color: white !important;}
-    .stTextInput input {color: black !important;}
+    /* Make text input readable on phone: white background, black text */
+    .stTextInput input {
+        color: black !important;
+        background-color: white !important;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -306,8 +310,9 @@ else:
         st.components.v1.html(html_code, height=600, scrolling=False)
 
     else:
+        # New message text here:
         st.markdown(
-            "<h2 style='text-align:center; color:white;'>Waiting for first update...</h2>",
+            "<h2 style='text-align:center; color:white;'>Waiting for Upload...</h2>",
             unsafe_allow_html=True,
         )
         wait_html = """
