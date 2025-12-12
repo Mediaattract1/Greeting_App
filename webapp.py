@@ -14,7 +14,6 @@ OUTPUT_FOLDER = "generated_videos"
 TARGET_RES = (1920, 1080)
 
 # How often the display page should refresh (seconds)
-# Restaurant owners won't change screens often, so 3 minutes is fine.
 DISPLAY_REFRESH_SECONDS = 180  # 3 minutes
 
 # --- SAFE SETUP ---
@@ -191,7 +190,7 @@ if mode == "update":
 
             txt_clip = ImageClip(temp_img).with_duration(clip.duration)
 
-            # Keep position logic the same, but now the text is guaranteed to fit
+            # Position (same layout as before)
             center_point_x = clip.w * 0.70
             target_x = center_point_x - (img_w / 2)
             target_y = (clip.h * 0.75) - (img_h / 2)
@@ -249,7 +248,7 @@ if mode == "update":
             st.session_state.status = "idle"
             st.rerun()
 
-# === DISPLAY MODE (BROWSER REFRESH + RAW HTML5 VIDEO) ===
+# === DISPLAY MODE (COMPONENT HTML + JS RELOAD) ===
 else:
     TARGET_FILE = "video.mp4"
     real_target = os.path.join(OUTPUT_FOLDER, TARGET_FILE)
@@ -260,8 +259,11 @@ else:
             video_bytes = f.read()
         video_b64 = base64.b64encode(video_bytes).decode()
 
-        # Main video element (autoplay + loop)
-        video_html = f"""
+        html_code = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <style>
         html, body {{
             margin: 0;
@@ -278,37 +280,37 @@ else:
             background-color: black;
         }}
         </style>
-        <video autoplay loop muted playsinline>
-            <source src="data:video/mp4;base64,{video_b64}" type="video/mp4">
-            Your browser does not support the video tag.
-        </video>
+        </head>
+        <body>
+            <video autoplay loop muted playsinline>
+                <source src="data:video/mp4;base64,{video_b64}" type="video/mp4">
+                Your browser does not support the video tag.
+            </video>
+
+            <script>
+                // Reload the page every DISPLAY_REFRESH_SECONDS so new videos are picked up
+                const RELOAD_MS = {DISPLAY_REFRESH_SECONDS * 1000};
+                setTimeout(function() {{
+                    window.location.reload(true);
+                }}, RELOAD_MS);
+            </script>
+        </body>
+        </html>
         """
 
-        # Inject video into the main DOM (no iframe) so this script reloads the whole page
-        st.markdown(video_html, unsafe_allow_html=True)
-
-        # Browser-side auto-refresh every DISPLAY_REFRESH_SECONDS (no long server sleep)
-        refresh_js = f"""
-        <script>
-        setTimeout(function() {{
-            window.location.reload(true);
-        }}, {DISPLAY_REFRESH_SECONDS * 1000});
-        </script>
-        """
-        st.markdown(refresh_js, unsafe_allow_html=True)
+        st.components.v1.html(html_code, height=600, scrolling=False)
 
     else:
-        # No video yet: show waiting message and auto-retry
         st.markdown(
             "<h2 style='text-align:center; color:white;'>Waiting for first update...</h2>",
             unsafe_allow_html=True,
         )
-        # Shorter retry interval while waiting
-        waiting_js = """
+        # Try again every 5 seconds until the first video exists
+        wait_html = """
         <script>
         setTimeout(function() {
             window.location.reload(true);
         }, 5000);
         </script>
         """
-        st.markdown(waiting_js, unsafe_allow_html=True)
+        st.markdown(wait_html, unsafe_allow_html=True)
