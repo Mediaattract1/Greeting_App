@@ -247,7 +247,8 @@ if mode == "update":
     elif st.session_state.status == "done":
         st.balloons()
         display_name = st.session_state.get("display_name", st.session_state.get("name_input", ""))
-        st.success(f"Success! Your Greeting for **{display_name}** is playing on the Screen.")
+        # 🔹 Updated message: no longer promises "is playing", just that it's being sent.
+        st.success(f"Success! Your greeting for **{display_name}** is being sent to your screen.")
         if st.button("Create New Greeting"):
             st.session_state.status = "idle"
             st.rerun()
@@ -310,7 +311,6 @@ else:
         st.components.v1.html(html_code, height=600, scrolling=False)
 
     else:
-        # New message text here:
         st.markdown(
             "<h2 style='text-align:center; color:white;'>Waiting for Upload...</h2>",
             unsafe_allow_html=True,
