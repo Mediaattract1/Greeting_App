@@ -9,7 +9,11 @@ import gc
 import base64
 
 # --- CONFIGURATION ---
-BASE_URL = "https://greeting-app-wh2w.onrender.com"  # kept for reference, not used directly by JS
+# NOTE: This must match the actual domain you are using.
+# For now, it's your Render URL. When you move to a custom domain,
+# change this to that domain (e.g., https://mygreetingscreen.com).
+BASE_URL = "https://greeting-app-wh2w.onrender.com"
+
 TEMPLATE_FILE = "template_HB1_wide.mp4"
 OUTPUT_FOLDER = "generated_videos"
 TARGET_RES = (1920, 1080)
@@ -232,8 +236,9 @@ else:
             video_bytes = f.read()
         video_b64 = base64.b64encode(video_bytes).decode()
 
-        # (Not used directly now, but kept for clarity)
-        version_url = "?mode=version"
+        # Hard-coded absolute version URL – this MUST match BASE_URL above.
+        # We append a cache-buster so we never get a stale response.
+        version_base = f"{BASE_URL}/?mode=version"
 
         html_code = f"""
         <!DOCTYPE html>
@@ -265,24 +270,11 @@ else:
 
             <script>
                 const initialVersion = {current_version};
-
-                function buildVersionUrl() {{
-                    try {{
-                        // Use parent origin so we hit the real app root, not the iframe URL
-                        const origin = (window.parent && window.parent.location)
-                            ? window.parent.location.origin
-                            : window.location.origin;
-                        // Always point to root with ?mode=version and add cache-buster
-                        return origin + "/?mode=version&_ts=" + Date.now();
-                    }} catch (e) {{
-                        // Fallback: relative to current origin
-                        return "/?mode=version&_ts=" + Date.now();
-                    }}
-                }}
+                const versionBase = "{version_base}";
 
                 async function checkVersion() {{
                     try {{
-                        const url = buildVersionUrl();
+                        const url = versionBase + "&_ts=" + Date.now();
                         const resp = await fetch(url, {{ cache: "no-store" }});
                         const data = await resp.json();
                         if (data.version && data.version > initialVersion) {{
