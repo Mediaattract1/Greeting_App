@@ -13,9 +13,7 @@ TEMPLATE_FILE = "template_HB1_wide.mp4"
 OUTPUT_FOLDER = "generated_videos"
 TARGET_RES = (1920, 1080)
 
-# How often the display page should refresh (in seconds)
-# This is the maximum delay before a new greeting shows up,
-# after the new video file has been written.
+# How often the display page should refresh (seconds)
 DISPLAY_REFRESH_SECONDS = 10
 
 # --- SAFE SETUP ---
@@ -216,18 +214,50 @@ if mode == "update":
             st.session_state.status = "idle"
             st.rerun()
 
-# === DISPLAY MODE (PYTHON-SIDE AUTO-REFRESH + ST.VIDEO) ===
+# === DISPLAY MODE (PYTHON REFRESH + RAW HTML5 VIDEO) ===
 else:
     TARGET_FILE = "video.mp4"
     real_target = os.path.join(OUTPUT_FOLDER, TARGET_FILE)
 
     if os.path.exists(real_target):
-        # Read the video each run so changes are picked up after refresh
+        # Read and base64 encode the video each run
         with open(real_target, "rb") as f:
             video_bytes = f.read()
+        video_b64 = base64.b64encode(video_bytes).decode()
 
-        # Streamlit will render an HTML5 <video> element that loops smoothly client-side
-        st.video(video_bytes, format="video/mp4")
+        # Use a raw HTML5 video tag with autoplay + loop + muted + playsinline
+        html_code = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+        html, body {{
+            margin: 0;
+            padding: 0;
+            width: 100vw;
+            height: 100vh;
+            background-color: black;
+            overflow: hidden;
+        }}
+        video {{
+            width: 100vw;
+            height: 100vh;
+            object-fit: contain;
+            background-color: black;
+        }}
+        </style>
+        </head>
+        <body>
+            <video autoplay loop muted playsinline>
+                <source src="data:video/mp4;base64,{video_b64}" type="video/mp4">
+                Your browser does not support the video tag.
+            </video>
+        </body>
+        </html>
+        """
+
+        st.components.v1.html(html_code, height=600, scrolling=False)
 
         # After some time, rerun the whole app so we pick up any new video
         time.sleep(DISPLAY_REFRESH_SECONDS)
