@@ -9,14 +9,14 @@ import gc
 import base64
 
 # --- CONFIGURATION ---
-# NOTE: This must match the actual domain you are using.
-# For now, it's your Render URL. When you move to a custom domain,
-# change this to that domain (e.g., https://mygreetingscreen.com).
-BASE_URL = "https://greeting-app-wh2w.onrender.com"
-
+BASE_URL = "https://greeting-app-wh2w.onrender.com"  # For reference only
 TEMPLATE_FILE = "template_HB1_wide.mp4"
 OUTPUT_FOLDER = "generated_videos"
 TARGET_RES = (1920, 1080)
+
+# How often the display page should reload (in seconds)
+# This is the maximum delay before a new greeting shows up.
+DISPLAY_RELOAD_SECONDS = 30
 
 # --- SAFE SETUP ---
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
@@ -108,14 +108,6 @@ st.set_page_config(page_title="Sign Manager", layout="wide", initial_sidebar_sta
 query_params = st.query_params
 mode = query_params.get("mode", "display")
 
-# === VERSION API MODE ===
-if mode == "version":
-    TARGET_FILE = "video.mp4"
-    real_target = os.path.join(OUTPUT_FOLDER, TARGET_FILE)
-    version = os.stat(real_target).st_mtime if os.path.exists(real_target) else 0
-    st.json({"version": version})
-    st.stop()
-
 # === GLOBAL CSS ===
 st.markdown("""
     <style>
@@ -200,12 +192,12 @@ if mode == "update":
             final.close()
             gc.collect()
 
+            # Overwrite the live file
             shutil.move(temp_out, os.path.join(OUTPUT_FOLDER, TARGET_FILE))
             if os.path.exists(temp_img):
                 os.remove(temp_img)
 
             prog.progress(100)
-            # Save normalized name for the success message
             st.session_state.display_name = normalized
             st.session_state.status = "done"
             st.rerun()
@@ -224,21 +216,15 @@ if mode == "update":
             st.session_state.status = "idle"
             st.rerun()
 
-# === DISPLAY MODE (INFINITE LOOP + VERSION POLLING) ===
+# === DISPLAY MODE (SIMPLE LOOP + PERIODIC PAGE RELOAD) ===
 else:
     TARGET_FILE = "video.mp4"
     real_target = os.path.join(OUTPUT_FOLDER, TARGET_FILE)
 
     if os.path.exists(real_target):
-        current_version = os.stat(real_target).st_mtime
-
         with open(real_target, 'rb') as f:
             video_bytes = f.read()
         video_b64 = base64.b64encode(video_bytes).decode()
-
-        # Hard-coded absolute version URL – this MUST match BASE_URL above.
-        # We append a cache-buster so we never get a stale response.
-        version_base = f"{BASE_URL}/?mode=version"
 
         html_code = f"""
         <!DOCTYPE html>
@@ -269,24 +255,11 @@ else:
             </video>
 
             <script>
-                const initialVersion = {current_version};
-                const versionBase = "{version_base}";
-
-                async function checkVersion() {{
-                    try {{
-                        const url = versionBase + "&_ts=" + Date.now();
-                        const resp = await fetch(url, {{ cache: "no-store" }});
-                        const data = await resp.json();
-                        if (data.version && data.version > initialVersion) {{
-                            window.location.reload(true);
-                        }}
-                    }} catch (e) {{
-                        console.log("Version check failed", e);
-                    }}
-                }}
-
-                // Check every 4 seconds
-                setInterval(checkVersion, 4000);
+                // Periodically reload the whole page so new videos are picked up
+                const RELOAD_MS = {DISPLAY_RELOAD_SECONDS * 1000};
+                setTimeout(function() {{
+                    window.location.reload(true);
+                }}, RELOAD_MS);
             </script>
         </body>
         </html>
@@ -295,6 +268,11 @@ else:
         st.components.v1.html(html_code, height=600, scrolling=False)
 
     else:
-        st.info("Waiting for first update...")
-        time.sleep(3)
+        # No video yet: show waiting message and auto-retry
+        st.markdown(
+            "<h2 style='text-align:center; color:white;'>Waiting for first update...</h2>",
+            unsafe_allow_html=True,
+        )
+        # Simple auto-refresh using Streamlit's rerun
+        time.sleep(5)
         st.rerun()
