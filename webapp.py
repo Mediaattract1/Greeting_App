@@ -15,7 +15,7 @@ TARGET_RES = (1920, 1080)
 
 # How often the display page should refresh (seconds)
 # Restaurant owners won't change screens often, so 3 minutes is fine.
-DISPLAY_REFRESH_SECONDS = 180  # was 10
+DISPLAY_REFRESH_SECONDS = 180  # 3 minutes
 
 # --- SAFE SETUP ---
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
@@ -72,21 +72,45 @@ def safe_resize(clip, size):
     except:
         return clip.resize(newsize=size)
 
-def create_full_name_image(text, video_h, filename):
-    font_size = int(video_h * 0.16)
-    try:
-        font = ImageFont.truetype("arialbd.ttf", font_size)
-    except:
+def create_full_name_image(text, video_h, filename, max_width=None):
+    """
+    Render the name text into an image.
+    If max_width is given, automatically shrink the font so that
+    the rendered text width does not exceed max_width.
+    """
+    # Start with the "normal" large size
+    base_font_size = int(video_h * 0.16)
+    font_size = base_font_size
+
+    # Don't let it get ridiculously tiny
+    min_font_size = max(int(video_h * 0.08), 24)
+
+    def load_font(size):
         try:
-            font = ImageFont.truetype("arial.ttf", font_size)
+            return ImageFont.truetype("arialbd.ttf", size)
         except:
-            font = ImageFont.load_default()
+            try:
+                return ImageFont.truetype("arial.ttf", size)
+            except:
+                return ImageFont.load_default()
 
-    dummy = ImageDraw.Draw(Image.new('RGB', (1, 1)))
-    bbox = dummy.textbbox((0, 0), text, font=font)
-    text_w = bbox[2] - bbox[0]
-    text_h = bbox[3] - bbox[1]
+    # Find a font size that fits within max_width (if provided)
+    while True:
+        font = load_font(font_size)
+        dummy = ImageDraw.Draw(Image.new('RGB', (1, 1)))
+        bbox = dummy.textbbox((0, 0), text, font=font)
+        text_w = bbox[2] - bbox[0]
+        text_h = bbox[3] - bbox[1]
 
+        if (max_width is None) or (text_w <= max_width) or (font_size <= min_font_size):
+            break
+
+        # Reduce font size a bit and try again
+        font_size = int(font_size * 0.9)
+        if font_size < min_font_size:
+            font_size = min_font_size
+
+    # Now render with the chosen font
     pad = 50
     img = Image.new('RGBA', (text_w + pad * 2, text_h + pad * 2), (255, 255, 255, 0))
     draw = ImageDraw.Draw(img)
@@ -153,11 +177,21 @@ if mode == "update":
             gc.collect()
 
             clip = VideoFileClip(TEMPLATE_FILE)
-            img_w, img_h = create_full_name_image(full_text, clip.h, temp_img)
+
+            # Allow the name text to occupy up to ~55% of the video width
+            max_name_width = int(clip.w * 0.55)
+
+            img_w, img_h = create_full_name_image(
+                full_text,
+                clip.h,
+                temp_img,
+                max_width=max_name_width
+            )
             prog.progress(30)
 
             txt_clip = ImageClip(temp_img).with_duration(clip.duration)
 
+            # Keep position logic the same, but now the text is guaranteed to fit
             center_point_x = clip.w * 0.70
             target_x = center_point_x - (img_w / 2)
             target_y = (clip.h * 0.75) - (img_h / 2)
@@ -215,7 +249,7 @@ if mode == "update":
             st.session_state.status = "idle"
             st.rerun()
 
-# === DISPLAY MODE (PYTHON REFRESH + RAW HTML5 VIDEO) ===
+# === DISPLAY MODE (BROWSER REFRESH + RAW HTML5 VIDEO) ===
 else:
     TARGET_FILE = "video.mp4"
     real_target = os.path.join(OUTPUT_FOLDER, TARGET_FILE)
@@ -226,12 +260,8 @@ else:
             video_bytes = f.read()
         video_b64 = base64.b64encode(video_bytes).decode()
 
-        # Use a raw HTML5 video tag with autoplay + loop + muted + playsinline
-        html_code = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        # Main video element (autoplay + loop)
+        video_html = f"""
         <style>
         html, body {{
             margin: 0;
@@ -248,21 +278,24 @@ else:
             background-color: black;
         }}
         </style>
-        </head>
-        <body>
-            <video autoplay loop muted playsinline>
-                <source src="data:video/mp4;base64,{video_b64}" type="video/mp4">
-                Your browser does not support the video tag.
-            </video>
-        </body>
-        </html>
+        <video autoplay loop muted playsinline>
+            <source src="data:video/mp4;base64,{video_b64}" type="video/mp4">
+            Your browser does not support the video tag.
+        </video>
         """
 
-        st.components.v1.html(html_code, height=600, scrolling=False)
+        # Inject video into the main DOM (no iframe) so this script reloads the whole page
+        st.markdown(video_html, unsafe_allow_html=True)
 
-        # After some time, rerun the whole app so we pick up any new video
-        time.sleep(DISPLAY_REFRESH_SECONDS)
-        st.rerun()
+        # Browser-side auto-refresh every DISPLAY_REFRESH_SECONDS (no long server sleep)
+        refresh_js = f"""
+        <script>
+        setTimeout(function() {{
+            window.location.reload(true);
+        }}, {DISPLAY_REFRESH_SECONDS * 1000});
+        </script>
+        """
+        st.markdown(refresh_js, unsafe_allow_html=True)
 
     else:
         # No video yet: show waiting message and auto-retry
@@ -270,5 +303,12 @@ else:
             "<h2 style='text-align:center; color:white;'>Waiting for first update...</h2>",
             unsafe_allow_html=True,
         )
-        time.sleep(5)
-        st.rerun()
+        # Shorter retry interval while waiting
+        waiting_js = """
+        <script>
+        setTimeout(function() {
+            window.location.reload(true);
+        }, 5000);
+        </script>
+        """
+        st.markdown(waiting_js, unsafe_allow_html=True)
