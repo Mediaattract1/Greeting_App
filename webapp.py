@@ -9,14 +9,14 @@ import gc
 import base64
 
 # --- CONFIGURATION ---
-BASE_URL = "https://greeting-app-wh2w.onrender.com"  # For reference only
 TEMPLATE_FILE = "template_HB1_wide.mp4"
 OUTPUT_FOLDER = "generated_videos"
 TARGET_RES = (1920, 1080)
 
-# How often the display page should reload (in seconds)
-# This is the maximum delay before a new greeting shows up.
-DISPLAY_RELOAD_SECONDS = 10  # was 30
+# How often the display page should refresh (in seconds)
+# This is the maximum delay before a new greeting shows up,
+# after the new video file has been written.
+DISPLAY_REFRESH_SECONDS = 10
 
 # --- SAFE SETUP ---
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
@@ -216,56 +216,22 @@ if mode == "update":
             st.session_state.status = "idle"
             st.rerun()
 
-# === DISPLAY MODE (SIMPLE LOOP + PERIODIC PAGE RELOAD) ===
+# === DISPLAY MODE (PYTHON-SIDE AUTO-REFRESH + ST.VIDEO) ===
 else:
     TARGET_FILE = "video.mp4"
     real_target = os.path.join(OUTPUT_FOLDER, TARGET_FILE)
 
     if os.path.exists(real_target):
-        with open(real_target, 'rb') as f:
+        # Read the video each run so changes are picked up after refresh
+        with open(real_target, "rb") as f:
             video_bytes = f.read()
-        video_b64 = base64.b64encode(video_bytes).decode()
 
-        html_code = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <style>
-        html, body {{
-            margin: 0;
-            padding: 0;
-            width: 100vw;
-            height: 100vh;
-            background-color: black;
-            overflow: hidden;
-        }}
-        video {{
-            width: 100vw;
-            height: 100vh;
-            object-fit: contain;
-            pointer-events: none;
-            background-color: black;
-        }}
-        </style>
-        </head>
-        <body>
-            <video id="hbVideo" autoplay loop muted playsinline>
-                <source src="data:video/mp4;base64,{video_b64}" type="video/mp4">
-            </video>
+        # Streamlit will render an HTML5 <video> element that loops smoothly client-side
+        st.video(video_bytes, format="video/mp4")
 
-            <script>
-                // Periodically reload the whole page so new videos are picked up
-                const RELOAD_MS = {DISPLAY_RELOAD_SECONDS * 1000};
-                setTimeout(function() {{
-                    window.location.reload(true);
-                }}, RELOAD_MS);
-            </script>
-        </body>
-        </html>
-        """
-
-        st.components.v1.html(html_code, height=600, scrolling=False)
+        # After some time, rerun the whole app so we pick up any new video
+        time.sleep(DISPLAY_REFRESH_SECONDS)
+        st.rerun()
 
     else:
         # No video yet: show waiting message and auto-retry
@@ -273,6 +239,5 @@ else:
             "<h2 style='text-align:center; color:white;'>Waiting for first update...</h2>",
             unsafe_allow_html=True,
         )
-        # Simple auto-refresh using Streamlit's rerun
         time.sleep(5)
         st.rerun()
