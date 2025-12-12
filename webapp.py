@@ -16,7 +16,7 @@ TARGET_RES = (1920, 1080)
 
 # How often the display page should reload (in seconds)
 # This is the maximum delay before a new greeting shows up.
-DISPLAY_RELOAD_SECONDS = 30
+DISPLAY_RELOAD_SECONDS = 10  # was 30
 
 # --- SAFE SETUP ---
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
