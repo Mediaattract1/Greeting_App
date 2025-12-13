@@ -9,7 +9,18 @@ import gc
 import base64
 
 # --- CONFIGURATION ---
-TEMPLATE_FILE = "template_HB1_wide.mp4"
+# Default / legacy template (Happy Birthday)
+DEFAULT_HB_TEMPLATE = "template_HB1_wide.mp4"
+
+# New wedding congratulations template
+WEDDING_TEMPLATE = "CON_WED_1080_15_001.mp4"
+
+# Map logical choices to actual template filenames
+TEMPLATES = {
+    "Happy Birthday": DEFAULT_HB_TEMPLATE,
+    "Wedding Congratulations": WEDDING_TEMPLATE,
+}
+
 OUTPUT_FOLDER = "generated_videos"
 TARGET_RES = (1920, 1080)
 
@@ -153,13 +164,26 @@ if mode == "update":
     if "status" not in st.session_state:
         st.session_state.status = "idle"
 
+    # Ensure we always have a default template choice
+    if "template_choice" not in st.session_state:
+        st.session_state.template_choice = "Happy Birthday"
+
     if st.session_state.status == "idle":
         st.title("Create Greeting")
+
         with st.form("update_form"):
+            # Template selection (only one can be chosen)
+            template_choice = st.radio(
+                "Choose Template:",
+                ["Happy Birthday", "Wedding Congratulations"],
+                index=0 if st.session_state.template_choice == "Happy Birthday" else 1,
+            )
+
             name_input = st.text_input("Enter Name:", max_chars=20).strip()
             submit = st.form_submit_button("Update Sign", type="primary")
 
         if submit and name_input:
+            st.session_state.template_choice = template_choice
             st.session_state.status = "processing"
             st.session_state.name_input = name_input
             st.rerun()
@@ -173,13 +197,17 @@ if mode == "update":
             normalized = normalize_name(st.session_state.name_input)
             full_text = normalized + "!"
 
+            # Determine which template to use
+            template_key = st.session_state.get("template_choice", "Happy Birthday")
+            template_file = TEMPLATES.get(template_key, DEFAULT_HB_TEMPLATE)
+
             TARGET_FILE = "video.mp4"
             temp_out = "temp_render.mp4"
             temp_img = "temp_text_overlay.png"
 
             gc.collect()
 
-            clip = VideoFileClip(TEMPLATE_FILE)
+            clip = VideoFileClip(template_file)
 
             # Allow the name text to occupy up to ~55% of the video width
             max_name_width = int(clip.w * 0.55)
@@ -247,8 +275,11 @@ if mode == "update":
     elif st.session_state.status == "done":
         st.balloons()
         display_name = st.session_state.get("display_name", st.session_state.get("name_input", ""))
-        # Updated wording: no guarantee it's already playing
-        st.success(f"Success! Your greeting for **{display_name}** is being sent to your screen.")
+        template_key = st.session_state.get("template_choice", "Happy Birthday")
+        st.success(
+            f"Success! Your greeting for **{display_name}** "
+            f"using **{template_key}** is being sent to your screen."
+        )
         if st.button("Create New Greeting"):
             st.session_state.status = "idle"
             st.rerun()
@@ -297,7 +328,7 @@ else:
 
         st.components.v1.html(html_code, height=600, scrolling=False)
 
-        # 🔁 Python-side refresh after DISPLAY_REFRESH_SECONDS
+        # Python-side refresh after DISPLAY_REFRESH_SECONDS
         time.sleep(DISPLAY_REFRESH_SECONDS)
         st.rerun()
 
