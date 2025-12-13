@@ -12,13 +12,17 @@ import base64
 # Default / legacy template (Happy Birthday)
 DEFAULT_HB_TEMPLATE = "template_HB1_wide.mp4"
 
-# New wedding congratulations template
+# New templates
 WEDDING_TEMPLATE = "CON_WED_1080_15_001.mp4"
+ENGAGEMENT_TEMPLATE = "CON_ENG_1080_15_001.mp4"
+GRADUATION_TEMPLATE = "CON_GRA_1080_15_001.mp4"
 
 # Map logical choices to actual template filenames
 TEMPLATES = {
     "Happy Birthday": DEFAULT_HB_TEMPLATE,
     "Wedding Congratulations": WEDDING_TEMPLATE,
+    "Engagement Congratulations": ENGAGEMENT_TEMPLATE,
+    "Graduation Congratulations": GRADUATION_TEMPLATE,
 }
 
 OUTPUT_FOLDER = "generated_videos"
@@ -173,10 +177,23 @@ if mode == "update":
 
         with st.form("update_form"):
             # Template selection (only one can be chosen)
+            template_options = [
+                "Happy Birthday",
+                "Wedding Congratulations",
+                "Engagement Congratulations",
+                "Graduation Congratulations",
+            ]
+
+            # Determine default index based on last choice
+            try:
+                default_index = template_options.index(st.session_state.template_choice)
+            except ValueError:
+                default_index = 0
+
             template_choice = st.radio(
                 "Choose Template:",
-                ["Happy Birthday", "Wedding Congratulations"],
-                index=0 if st.session_state.template_choice == "Happy Birthday" else 1,
+                template_options,
+                index=default_index,
             )
 
             name_input = st.text_input("Enter Name:", max_chars=20).strip()
