@@ -247,13 +247,13 @@ if mode == "update":
     elif st.session_state.status == "done":
         st.balloons()
         display_name = st.session_state.get("display_name", st.session_state.get("name_input", ""))
-        # 🔹 Updated message: no longer promises "is playing", just that it's being sent.
+        # Updated wording: no guarantee it's already playing
         st.success(f"Success! Your greeting for **{display_name}** is being sent to your screen.")
         if st.button("Create New Greeting"):
             st.session_state.status = "idle"
             st.rerun()
 
-# === DISPLAY MODE (COMPONENT HTML + PARENT PAGE RELOAD) ===
+# === DISPLAY MODE (PYTHON TIMER + RERUN) ===
 else:
     TARGET_FILE = "video.mp4"
     real_target = os.path.join(OUTPUT_FOLDER, TARGET_FILE)
@@ -291,39 +291,21 @@ else:
                 <source src="data:video/mp4;base64,{video_b64}" type="video/mp4">
                 Your browser does not support the video tag.
             </video>
-
-            <script>
-                // Reload the *parent* Streamlit page every DISPLAY_REFRESH_SECONDS
-                // so Python reruns and embeds any new video file.
-                const RELOAD_MS = {DISPLAY_REFRESH_SECONDS * 1000};
-                setTimeout(function() {{
-                    if (window.parent && window.parent !== window) {{
-                        window.parent.location.reload(true);
-                    }} else {{
-                        window.location.reload(true);
-                    }}
-                }}, RELOAD_MS);
-            </script>
         </body>
         </html>
         """
 
         st.components.v1.html(html_code, height=600, scrolling=False)
 
+        # 🔁 Python-side refresh after DISPLAY_REFRESH_SECONDS
+        time.sleep(DISPLAY_REFRESH_SECONDS)
+        st.rerun()
+
     else:
+        # No video yet
         st.markdown(
             "<h2 style='text-align:center; color:white;'>Waiting for Upload...</h2>",
             unsafe_allow_html=True,
         )
-        wait_html = """
-        <script>
-        setTimeout(function() {
-            if (window.parent && window.parent !== window) {
-                window.parent.location.reload(true);
-            } else {
-                window.location.reload(true);
-            }
-        }, 5000);
-        </script>
-        """
-        st.markdown(wait_html, unsafe_allow_html=True)
+        time.sleep(5)
+        st.rerun()
